@@ -40,6 +40,7 @@ playwright install chromium           # 仅 e2e 测试需要
   - `HKTAX_MODEL_NAME`：模型名称（非秘密）；
   - `HKTAX_MODEL_API_KEY`：模型密钥（仅存服务端，绝不进入前端、页面或日志）。
 - **未配置/禁用**：不设置 `HKTAX_MODEL_API_KEY` 即为纯本地模式——本地表单计算完全不依赖模型，AI 外发授权（consent）可随时撤回；缺少配置时 AI 功能返回 `E_MODEL_UNCONFIGURED`（本地计算照常可用）。
+- **数据去向**：启用 AI 时，外发 payload 将发送至你自行配置的模型供应商（可能发生跨境传输）；供应商侧条款与数据处理政策由你自行评估，缺失信任时请使用纯本地模式。详见 [LEGAL.md](LEGAL.md) §2.4。
 
 ## 支持期间
 
@@ -77,3 +78,4 @@ playwright install chromium           # 仅 e2e 测试需要
 
 - 上表按各依赖包当前公开元数据整理；版本区间以 `pyproject.toml` 为准，升级后请以安装包元数据复核许可。解析类依赖（beautifulsoup4/pypdf）按用户决定不引入。
 - 参考/重用项目：[leeyc0/hksalariestax](https://github.com/leeyc0/hksalariestax)（固定 commit `94e4ddca53d792316e6a53b2fb2fa8cc9e571a91`），MIT License，Copyright (c) 2018 leeyc0；保留其版权与许可记录。
+- 本项目许可：[LICENSE](LICENSE)（MIT）；合规说明与免责声明：[LEGAL.md](LEGAL.md)；第三方通知（含依赖许可与官方资料引用说明）：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
