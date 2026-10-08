@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}物业税 — 香港税务计算{% endblock %}
+{% block head %}{% include "calc_styles.html" %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>物业税估算</h1>
+  <span class="badge badge-complete">已支持：可计算（已批准税项）</span>
+  <p class="lede">按你确认的资料与当前规则快照逐项物业估算物业税；结果仅为估算，不是税务局评税或专业意见。</p>
+</div>
+
+<div id="status-region" class="status-region" role="status" aria-live="polite">尚未计算。填写资料后按「检查资料」。</div>
+
+<!-- §6/§9：错误摘要可聚焦，链接到首个问题字段 -->
+<div id="error-summary" class="error-summary" role="alert" tabindex="-1" hidden>
+  <h2>还有 <span id="error-count">0</span> 项资料需要确认</h2>
+  <ul id="error-list"></ul>
+</div>
+
+<section aria-labelledby="form-title">
+  <h2 id="form-title" class="visually-hidden">物业税估算输入表单</h2>
+  <form id="calc-form" data-tax-type="property_tax"
+        data-execute-target="/api/v1/calc/property-tax"
+        data-page-path="/property" novalidate>
+    <fieldset class="card">
+      <legend><span class="step">01</span> 课税年度与物业</legend>
+      <div class="field">
+        <label for="assessment-year">课税年度</label>
+        <select id="assessment-year" name="year_of_assessment">
+          <option value="2024_25">2024/25</option>
+          <option value="2025_26" selected>2025/26</option>
+          <option value="2026_27">2026/27（尚未完结，按已确认规则快照估算）</option>
+        </select>
+      </div>
+      <p class="hint">评税单位＝逐项物业（BIR57 Note 1(b)）；本页按单一物业录入，多物业请经 API 提交 properties 明细。</p>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend><span class="step">02</span> 租金与扣除</legend>
+      <div class="field">
+        <label for="rent-received">租金收入（必填）</label>
+        <div class="money-row">
+          <input id="rent-received" name="rent_received" type="text"
+                 inputmode="decimal" autocomplete="off" required>
+          <span class="unit">港元</span>
+        </div>
+        <p class="hint">请输入数字，可含小数；无需千位逗号；不要留空。</p>
+      </div>
+      <div class="field">
+        <label for="rates-amount">差饷金额（业主缴付部分，可选）</label>
+        <div class="money-row">
+          <input id="rates-amount" name="rates_amount" type="text"
+                 inputmode="decimal" autocomplete="off">
+          <span class="unit">港元</span>
+        </div>
+        <p class="hint">未申报＝无扣除（Q7 口径）；申报正数金额时须确认以下两条件，任一未知系统追问。</p>
+      </div>
+      <div class="field">
+        <label for="rates-agreed">业主同意缴付差饷</label>
+        <select id="rates-agreed" name="rates_agreed">
+          <option value="">请选择</option>
+          <option value="true">是——同意由业主缴付</option>
+          <option value="false">否——不同意／由租客缴付</option>
+          <option value="unknown">不确定（需要补充资料）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="rates-actually-paid">差饷已实际缴付</label>
+        <select id="rates-actually-paid" name="rates_actually_paid">
+          <option value="">请选择</option>
+          <option value="true">是——已实际缴付</option>
+          <option value="false">否——尚未缴付</option>
+          <option value="unknown">不确定（需要补充资料）</option>
+        </select>
+        <p class="hint">差饷扣除须「同意缴付」且「已实际缴付」两条件成立（s.5(1A)(b)(i)）。</p>
+      </div>
+      <div class="field">
+        <label for="irrecoverable-rent">不可追回租金（可选）</label>
+        <div class="money-row">
+          <input id="irrecoverable-rent" name="irrecoverable_rent" type="text"
+                 inputmode="decimal" autocomplete="off">
+          <span class="unit">港元</span>
+        </div>
+        <p class="hint">未申报＝无此项扣除；追加扣除细节请经 API 提交。</p>
+      </div>
+      <div class="field">
+        <label for="deposit-offsets">按金抵销（可选）</label>
+        <div class="money-row">
+          <input id="deposit-offsets" name="deposit_offsets" type="text"
+                 inputmode="decimal" autocomplete="off">
+          <span class="unit">港元</span>
+        </div>
+        <p class="hint">按金抵销仅限不可追回部分；未申报即无。</p>
+      </div>
+    </fieldset>
+
+    <div class="actions">
+      <button type="button" id="check-input" class="btn btn-secondary">检查资料</button>
+      <button type="submit" id="confirm-and-calc" class="btn btn-primary">确认资料并计算</button>
+    </div>
+  </form>
+</section>
+
+<!-- 结果区：四状态徽标＋金额直读 canonical 分项（§12.1/§12.4） -->
+<section class="card" id="result-section" aria-labelledby="result-title" hidden>
+  <h2 id="result-title">计算结果</h2>
+  <p><span class="badge" id="result-badge">待计算</span></p>
+  <dl class="facts" id="result-amounts"></dl>
+  <div id="result-steps"></div>
+  <p class="privacy-note">金额直读服务器 canonical 分项；缺组件显示「未能估算」，不以零填补。</p>
+</section>
+
+<section class="card" aria-labelledby="property-entry">
+  <h2 id="property-entry">计算入口</h2>
+  <p>使用上方表单填写单一物业最小事实（租金收入；差饷/不可追回租金/按金未申报＝无扣除）；确认后经 <code>POST /api/v1/calc/prepare</code> → <code>POST /api/v1/calc/confirm</code> → <code>POST /api/v1/calc/property-tax</code> 三段执行。</p>
+  <p class="privacy-note">差饷扣除须业主「同意缴付」且「已实际缴付」两条件成立；任一未知时系统追问，不默认可扣。</p>
+</section>
+
+<section class="card" aria-labelledby="property-scope">
+  <h2 id="property-scope">覆盖说明</h2>
+  <ul>
+    <li>评税单位＝逐项物业；应评税净值＝（租金收入−不可追回租金−同意且已缴差饷）×80%。</li>
+    <li>标准税率 15%（2020/21 起）；按金抵销仅限不可追回部分；不可追回租金超额部分自以前课税年度回扣。</li>
+    <li>地租、修葺、保险、按揭利息不可在物业税下扣除（正数申索会被拒算）；附表 43 宽减无物业税行。</li>
+  </ul>
+  {% include "tax_entries.html" %}
+</section>
+
+<!-- §6 确认摘要对话框：不新增关卡，沿用「确认资料并计算」权威文案 -->
+<div id="confirm-dialog" class="dialog" role="dialog" aria-modal="true"
+     aria-labelledby="confirm-dialog-title" hidden>
+  <div class="dialog-panel" tabindex="-1">
+    <h2 id="confirm-dialog-title">确认资料摘要</h2>
+    <p>请核对税项、期间、输入摘要与所用规则版本；确认后开始计算。</p>
+    <div id="confirm-summary"></div>
+    <div class="actions">
+      <button type="button" id="confirm-back" class="btn btn-secondary">返回修改</button>
+      <button type="button" id="confirm-submit" class="btn btn-primary">确认资料并计算</button>
+    </div>
+  </div>
+</div>
+
+{% include "calc_flow_script.html" %}
+{% endblock %}

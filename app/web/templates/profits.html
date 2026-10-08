@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}利得税 — 香港税务计算{% endblock %}
+{% block head %}{% include "calc_styles.html" %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>利得税估算</h1>
+  <span class="badge badge-complete">已支持：可计算（已批准税项）</span>
+  <p class="lede">按你确认的资料与当前规则快照估算利得税；结果仅为估算，不是税务局评税或专业意见。</p>
+</div>
+
+<div id="status-region" class="status-region" role="status" aria-live="polite">尚未计算。填写资料后按「检查资料」。</div>
+
+<!-- §6/§9：错误摘要可聚焦，链接到首个问题字段 -->
+<div id="error-summary" class="error-summary" role="alert" tabindex="-1" hidden>
+  <h2>还有 <span id="error-count">0</span> 项资料需要确认</h2>
+  <ul id="error-list"></ul>
+</div>
+
+<section aria-labelledby="form-title">
+  <h2 id="form-title" class="visually-hidden">利得税估算输入表单</h2>
+  <form id="calc-form" data-tax-type="profits_tax"
+        data-execute-target="/api/v1/calc/profits-tax"
+        data-page-path="/profits" novalidate>
+    <fieldset class="card">
+      <legend><span class="step">01</span> 课税年度与主体类别</legend>
+      <div class="field">
+        <label for="assessment-year">课税年度</label>
+        <select id="assessment-year" name="year_of_assessment">
+          <option value="2024_25">2024/25</option>
+          <option value="2025_26" selected>2025/26</option>
+          <option value="2026_27">2026/27（尚未完结，按已确认规则快照估算）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="entity-kind">主体类别</label>
+        <select id="entity-kind" name="entity_kind">
+          <option value="sole_proprietorship" selected>独资（非法团）</option>
+          <option value="corporation">法团（有限公司）</option>
+        </select>
+        <p class="hint">合伙业务涉及合伙人份额与分配明细，本页暂不提供录入；请经 API 提交 partners 等事实。</p>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend><span class="step">02</span> 应评税利润</legend>
+      <div class="field">
+        <label for="assessable-profit">应评税利润（必填）</label>
+        <div class="money-row">
+          <input id="assessable-profit" name="assessable_profit" type="text"
+                 inputmode="decimal" autocomplete="off" required>
+          <span class="unit">港元</span>
+        </div>
+        <p class="hint">请输入数字，可含小数；无需千位逗号；不要留空。</p>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend><span class="step">03</span> 两级制资格（三态确认，不默认）</legend>
+      <div class="field">
+        <label for="two-tier-election">是否选择两级制（本年度）</label>
+        <select id="two-tier-election" name="two_tier_election">
+          <option value="">请选择</option>
+          <option value="true">是——已选择两级制（首个 2,000,000 港元适用低档）</option>
+          <option value="false">否——未选择（按全额税率计）</option>
+          <option value="unknown">不确定（需要补充资料）</option>
+        </select>
+        <p class="hint">三态任一未知时系统追问，不默认符合或不符合（D4.2）。</p>
+      </div>
+      <div class="field">
+        <label for="no-other-election">无其他关联实体（同一课税年度选择两级制）</label>
+        <select id="no-other-election" name="no_other_election">
+          <option value="">请选择</option>
+          <option value="true">是——无其他关联实体选择两级制</option>
+          <option value="false">否——有其他关联实体选择两级制</option>
+          <option value="unknown">不确定（需要补充资料）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="connected-entities-declaration">关联实体声明（基期结束时）</label>
+        <select id="connected-entities-declaration" name="connected_entities_declaration">
+          <option value="">请选择</option>
+          <option value="none">无——基期结束时无关联实体（声明空列表）</option>
+          <option value="unknown">不确定（需要补充资料）</option>
+        </select>
+        <p class="hint">无关联实体也须显式声明（空列表）；有关联实体明细请经 API 提交 connected_entities。</p>
+      </div>
+    </fieldset>
+
+    <div class="actions">
+      <button type="button" id="check-input" class="btn btn-secondary">检查资料</button>
+      <button type="submit" id="confirm-and-calc" class="btn btn-primary">确认资料并计算</button>
+    </div>
+  </form>
+</section>
+
+<!-- 结果区：四状态徽标＋金额直读 canonical 分项（§12.1/§12.4） -->
+<section class="card" id="result-section" aria-labelledby="result-title" hidden>
+  <h2 id="result-title">计算结果</h2>
+  <p><span class="badge" id="result-badge">待计算</span></p>
+  <dl class="facts" id="result-amounts"></dl>
+  <div id="result-steps"></div>
+  <p class="privacy-note">金额直读服务器 canonical 分项；缺组件显示「未能估算」，不以零填补。</p>
+</section>
+
+<section class="card" aria-labelledby="profits-entry">
+  <h2 id="profits-entry">计算入口</h2>
+  <p>使用上方表单填写最小事实（主体类别＋应评税利润＋两级制资格三项）；确认后经 <code>POST /api/v1/calc/prepare</code> → <code>POST /api/v1/calc/confirm</code> → <code>POST /api/v1/calc/profits-tax</code> 三段执行。</p>
+  <p class="privacy-note">两级制资格三项（关联实体声明、本年度选择、无其他关联实体选择）任一未知时，系统会追问而不默认符合或不符合。</p>
+</section>
+
+<section class="card" aria-labelledby="profits-scope">
+  <h2 id="profits-scope">覆盖说明</h2>
+  <ul>
+    <li>主体类别：法团（8.25%/16.5%）、非法团（7.5%/15%，含独资与合伙）、首个 200 万港元适用低档（2018/19 起）。</li>
+    <li>支持期间：2024/25、2025/26、2026/27；年度宽减按附表 43（2026/27 无条目）。</li>
+    <li>合伙按业务层计税并明示不等同合伙人个人税；法团/混合取整为产品精度约定并在结果中标注。</li>
+  </ul>
+  {% include "tax_entries.html" %}
+</section>
+
+<!-- §6 确认摘要对话框：不新增关卡，沿用「确认资料并计算」权威文案 -->
+<div id="confirm-dialog" class="dialog" role="dialog" aria-modal="true"
+     aria-labelledby="confirm-dialog-title" hidden>
+  <div class="dialog-panel" tabindex="-1">
+    <h2 id="confirm-dialog-title">确认资料摘要</h2>
+    <p>请核对税项、期间、输入摘要与所用规则版本；确认后开始计算。</p>
+    <div id="confirm-summary"></div>
+    <div class="actions">
+      <button type="button" id="confirm-back" class="btn btn-secondary">返回修改</button>
+      <button type="button" id="confirm-submit" class="btn btn-primary">确认资料并计算</button>
+    </div>
+  </div>
+</div>
+
+{% include "calc_flow_script.html" %}
+{% endblock %}

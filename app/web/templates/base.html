@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}香港税务计算{% endblock %}</title>
+  <style>
+    /* Annex A §5 视觉系统 token（与计算工作台同一视觉系统） */
+    :root {
+      --canvas: #F5F3EE;
+      --surface: #FFFFFF;
+      --ink: #202B2A;
+      --muted: #596663;
+      --line: #D9DED8;
+      --accent: #176B5B;
+      --accent-strong: #105346;
+      --notice: #80551C;
+      --danger: #A83232;
+      --focus: #175FCC;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: "Noto Sans CJK TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      font-size: 16px;
+      line-height: 1.65;
+    }
+    a { color: var(--accent); }
+    a:hover { color: var(--accent-strong); }
+    a:focus-visible,
+    button:focus-visible,
+    [tabindex="-1"]:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+    h1 { font-size: 28px; line-height: 1.3; margin: 0 0 8px; }
+    h2 { font-size: 19px; line-height: 1.4; margin: 0 0 12px; }
+    .visually-hidden {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .skip-link {
+      position: absolute;
+      inset-inline-start: 16px;
+      inset-block-start: -48px;
+      background: var(--surface);
+      padding: 8px 12px;
+      border-radius: 6px;
+      transition: inset-block-start 120ms ease-out;
+    }
+    .skip-link:focus { inset-block-start: 8px; }
+    .appbar {
+      background: var(--surface);
+      border-block-end: 1px solid var(--line);
+    }
+    .appbar-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 16px;
+      min-height: 64px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 16px;
+    }
+    .brand { font-weight: 600; margin: 0; }
+    .appbar nav ul {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 16px;
+      margin: 0;
+      padding: 0;
+    }
+    .appbar nav a {
+      text-decoration: none;
+      padding: 4px 2px;
+      border-block-end: 2px solid transparent;
+    }
+    .appbar nav a[aria-current="page"] {
+      color: var(--accent);
+      border-block-end-color: var(--accent);
+      font-weight: 600;
+    }
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 16px 16px 48px;
+    }
+    .page-head { margin-block-end: 16px; }
+    .lede { color: var(--muted); margin: 0; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      margin-block-end: 16px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 14px;
+      background: var(--surface);
+    }
+    .badge::before { margin-inline-end: 4px; }
+    .badge-complete { border-color: var(--accent); color: var(--accent-strong); }
+    .badge-complete::before { content: "●"; }
+    .badge-partial { border-color: var(--notice); color: var(--notice); }
+    .badge-partial::before { content: "◐"; }
+    .badge-neutral::before { content: "○"; }
+    .status-region {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 16px;
+      margin-block-end: 16px;
+      color: var(--muted);
+    }
+    .tax-entries {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 20px;
+      padding: 0;
+      margin: 8px 0 0;
+    }
+    .privacy-note { color: var(--muted); font-size: 14px; }
+    dl.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; }
+    dl.facts dt { font-weight: 600; }
+    dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+    code {
+      background: var(--canvas);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0 4px;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+    footer {
+      border-block-start: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+      padding: 16px;
+      text-align: center;
+    }
+    @media (min-width: 960px) {
+      main { padding: 32px 40px 64px; }
+      .card { padding: 24px; }
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="appbar">
+    <div class="appbar-inner">
+      <p class="brand">香港税务计算</p>
+      <nav aria-label="主导航">
+        <ul>
+          <li><a href="/" {% if request.url.path == "/" %}aria-current="page"{% endif %}>计算工作台</a></li>
+          <li><a href="/coverage" {% if request.url.path == "/coverage" %}aria-current="page"{% endif %}>税项覆盖</a></li>
+          <li><a href="/rules" {% if request.url.path == "/rules" %}aria-current="page"{% endif %}>规则</a></li>
+          <li><a href="/updates" {% if request.url.path == "/updates" %}aria-current="page"{% endif %}>更新</a></li>
+          <li><a href="/settings" {% if request.url.path == "/settings" %}aria-current="page"{% endif %}>设置</a></li>
+          <li><a href="/about" {% if request.url.path == "/about" %}aria-current="page"{% endif %}>关于</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <p>本工具不宣称获政府或税务局认证；所有结果仅为估算。仅限回环访问（127.0.0.1 / localhost）。</p>
+  </footer>
+</body>
+</html>

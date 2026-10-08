@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>覆盖范围与支持状态</title>
+</head>
+<body>
+  <h1>覆盖范围与支持状态</h1>
+  <table border="1">
+    <thead>
+      <tr>
+        <th>税项</th>
+        <th>子项</th>
+        <th>支持级别</th>
+        <th>主管机关</th>
+        <th>官方来源</th>
+        <th>核验日</th>
+        <th>适用期间</th>
+        <th>缺口</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item.tax }}</td>
+        <td>{{ item.subtopic }}</td>
+        <td>{{ item.support_level }}</td>
+        <td>{{ item.authority }}</td>
+        <td>{{ item.official_source }}</td>
+        <td>{{ item.verified_date }}</td>
+        <td>{{ item.applicable_periods | join("、") }}</td>
+        <td>{{ item.gaps }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p>个人入息课税为评税选择（比较各评税方式），非第四个独立税种。</p>
+  <p><a href="/">返回首页</a></p>
+</body>
+</html>

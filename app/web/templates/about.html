@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}关于 — 香港税务计算{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>关于本工具</h1>
+  <span class="badge badge-neutral">非官方认证</span>
+  <p class="lede">本地、确定性、单进程的香港税务与印花税估算工具。</p>
+</div>
+
+<section class="card" aria-labelledby="about-scope">
+  <h2 id="about-scope">覆盖范围</h2>
+  <p>已批准可计算：薪俸税、利得税、物业税、个人入息课税（评税选择比较）、物业从价印花税、香港股票转让印花税、租约印花税。完整支持状态见<a href="/coverage">税项覆盖</a>。</p>
+  <p>支持期间：直接税 2024/25–2026/27（2026/27 为未完结年度，按已确认规则快照计算并提示）；印花税文书日期窗口 2024-04-01 至 2026-10-07。</p>
+</section>
+
+<section class="card" aria-labelledby="about-disclaimer">
+  <h2 id="about-disclaimer">免责声明</h2>
+  <ul>
+    <li>本项目为独立开源工具，与香港税务局（IRD）不隶属；<strong>不宣称</strong>获得任何官方认证或认可。</li>
+    <li>所有计算结果仅为按已发布规则快照的估算，不构成税务意见或法律意见；正式评税以香港税务局为准。</li>
+    <li>计算完全在本地完成；AI 引导为可选功能，任何外发都须逐字预览并单次授权。</li>
+  </ul>
+  <p><a href="/about">关于页</a>｜<a href="/rules">规则快照</a>｜<a href="/updates">更新检查</a></p>
+</section>
+{% endblock %}

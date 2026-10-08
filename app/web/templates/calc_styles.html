@@ -1,0 +1,90 @@
+<style>
+  /* 税项计算页共用样式：自 index.html（计算工作台）逐字复用——Annex A §5/§6/§9
+     token 与控件形态不另发明。base.html 已含 token／card／badge-complete／
+     badge-partial／status-region／dl.facts，此处仅补齐表单、按钮、四状态
+     徽标、错误摘要与确认对话框所需规则。 */
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .field { margin-block-end: 16px; }
+  .field label {
+    display: block;
+    font-size: 15px;
+    font-weight: 600;
+    margin-block-end: 4px;
+  }
+  .field .hint { font-size: 14px; color: var(--muted); margin: 4px 0 0; }
+  .field input, .field select, .field textarea {
+    width: 100%;
+    font: inherit;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .money-row { display: flex; align-items: center; gap: 8px; }
+  .money-row input { flex: 1 1 auto; }
+  .money-row .unit { color: var(--muted); font-size: 14px; white-space: nowrap; }
+  .btn {
+    font: inherit;
+    min-height: 44px;
+    padding: 8px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #FFFFFF;
+  }
+  .btn-primary:hover, .btn-primary:active { background: var(--accent-strong); }
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .btn-secondary:hover { color: var(--accent-strong); border-color: var(--accent-strong); }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-block-start: 8px; }
+  fieldset.card { border: 1px solid var(--line); }
+  legend { font-size: 19px; line-height: 1.4; font-weight: 600; padding: 0 8px; }
+  legend .step { color: var(--muted); font-weight: 400; margin-inline-end: 4px; }
+  .badge-needs-input { border-color: var(--notice); color: var(--notice); }
+  .badge-needs-input::before { content: "▲"; }
+  .badge-blocked { border-color: var(--danger); color: var(--danger); }
+  .badge-blocked::before { content: "■"; }
+  .error-summary {
+    background: var(--surface);
+    border: 1px solid var(--danger);
+    border-inline-start: 6px solid var(--danger);
+    border-radius: 8px;
+    padding: 16px;
+    margin-block-end: 16px;
+  }
+  .error-summary h2 { color: var(--danger); }
+  .error-summary a { color: var(--danger); }
+  .dialog[hidden] { display: none; }
+  .dialog {
+    position: fixed;
+    inset: 0;
+    background: rgba(32, 43, 42, 0.4);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 48px 16px 16px;
+    z-index: 10;
+  }
+  .dialog-panel {
+    background: var(--surface);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(32, 43, 42, 0.18);
+    padding: 24px 16px;
+    max-width: 640px;
+    width: 100%;
+    max-height: 80vh;
+    overflow: auto;
+  }
+</style>

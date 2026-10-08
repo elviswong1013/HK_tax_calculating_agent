@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}印花税 — 租约 — 香港税务计算{% endblock %}
+{% block head %}{% include "calc_styles.html" %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>印花税 — 租约</h1>
+  <span class="badge badge-complete">已支持：可计算（已批准税项）</span>
+  <p class="lede">按文书日期与租期估算普通租约印花税（租金、非租金代价与复本分项列示）；结果仅为估算，不是税务局评税或专业意见。</p>
+</div>
+
+<div id="status-region" class="status-region" role="status" aria-live="polite">尚未计算。填写资料后按「检查资料」。</div>
+
+<!-- §6/§9：错误摘要可聚焦，链接到首个问题字段 -->
+<div id="error-summary" class="error-summary" role="alert" tabindex="-1" hidden>
+  <h2>还有 <span id="error-count">0</span> 项资料需要确认</h2>
+  <ul id="error-list"></ul>
+</div>
+
+<section aria-labelledby="form-title">
+  <h2 id="form-title" class="visually-hidden">租约印花税输入表单</h2>
+  <form id="calc-form" data-tax-type="stamp_lease"
+        data-execute-target="/api/v1/calc/stamp-duty/lease"
+        data-page-path="/stamps/lease" novalidate>
+    <fieldset class="card">
+      <legend><span class="step">01</span> 文书与租期</legend>
+      <div class="field">
+        <label for="instrument-date">文书日期（必填）</label>
+        <input id="instrument-date" name="instrument_date" type="text"
+               inputmode="numeric" autocomplete="off" required>
+        <p class="hint">格式 YYYY-MM-DD；税率制度按文书日期选定。</p>
+      </div>
+      <div class="field">
+        <label for="term-months">租期（月）（必填）</label>
+        <input id="term-months" name="term_months" type="text"
+               inputmode="numeric" autocomplete="off" required>
+        <p class="hint">固定租期的正整数月数；租期由文书日期起算（末日＝起租日＋N 个月的前一日）。</p>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend><span class="step">02</span> 租金与非租金代价</legend>
+      <div class="field">
+        <label for="monthly-rent">月租（必填）</label>
+        <div class="money-row">
+          <input id="monthly-rent" name="monthly_rent" type="text"
+                 inputmode="decimal" autocomplete="off" required>
+          <span class="unit">港元</span>
+        </div>
+        <p class="hint">全期固定月租；确认后按「月租×租期月数」折算租期内总租金计税（≤1 年档不年化）。</p>
+      </div>
+      <div class="field">
+        <label for="premium">非租金代价（premium）（必填）</label>
+        <div class="money-row">
+          <input id="premium" name="premium" type="text"
+                 inputmode="decimal" autocomplete="off" required>
+          <span class="unit">港元</span>
+        </div>
+        <p class="hint">无 premium 请显式填 0；缺失不等于零，不得留空（D3.1）。</p>
+      </div>
+      <div class="field">
+        <label for="deposit">按金（可选）</label>
+        <div class="money-row">
+          <input id="deposit" name="deposit" type="text"
+                 inputmode="decimal" autocomplete="off">
+          <span class="unit">港元</span>
+        </div>
+        <p class="hint">按金仅记录，不计入计税租金（D3.1）。</p>
+      </div>
+    </fieldset>
+
+    <div class="actions">
+      <button type="button" id="check-input" class="btn btn-secondary">检查资料</button>
+      <button type="submit" id="confirm-and-calc" class="btn btn-primary">确认资料并计算</button>
+    </div>
+  </form>
+</section>
+
+<!-- 结果区：四状态徽标＋金额直读 canonical 分项（§12.1/§12.4） -->
+<section class="card" id="result-section" aria-labelledby="result-title" hidden>
+  <h2 id="result-title">计算结果</h2>
+  <p><span class="badge" id="result-badge">待计算</span></p>
+  <dl class="facts" id="result-amounts"></dl>
+  <div id="result-steps"></div>
+  <p class="privacy-note">金额直读服务器 canonical 分项；缺组件显示「未能估算」，不以零填补。</p>
+</section>
+
+<section class="card" aria-labelledby="stampl-entry">
+  <h2 id="stampl-entry">计算入口</h2>
+  <p>使用上方表单填写文书日期、租期（月）、月租与 premium；确认后经 <code>POST /api/v1/calc/prepare</code> → <code>POST /api/v1/calc/confirm</code> → <code>POST /api/v1/calc/stamp-duty/lease</code> 三段执行。</p>
+  <p class="privacy-note">premium（非租金代价）必须显式提供（无则填 "0"）；缺失不等于零，系统会追问而不会静默按零计税。</p>
+</section>
+
+<section class="card" aria-labelledby="stampl-scope">
+  <h2 id="stampl-scope">覆盖说明</h2>
+  <ul>
+    <li>档位按租期周年日判定：不确定期限 0.25%；不超 1 年 0.25%（总租金）；超 1 年至 3 年 0.5%；超 3 年 1%。</li>
+    <li>基数「每 100 港元或其部分」向上取整后乘率、税额再向上取整至 1 元；按金仅记录、不计入。</li>
+    <li>premium 与租金分别独立计税：含租按期间费率（2026-02-26 起住宅 6.5%／非住宅 4.25%），无租按物业从价表；复本每份 5 港元（原本不足 5 港元者同额）。</li>
+    <li>本页按固定月租×租期月数录入；分段租金／总租金／年租等其他租金口径请经 API 提交对应事实。</li>
+  </ul>
+  {% include "tax_entries.html" %}
+</section>
+
+<!-- §6 确认摘要对话框：不新增关卡，沿用「确认资料并计算」权威文案 -->
+<div id="confirm-dialog" class="dialog" role="dialog" aria-modal="true"
+     aria-labelledby="confirm-dialog-title" hidden>
+  <div class="dialog-panel" tabindex="-1">
+    <h2 id="confirm-dialog-title">确认资料摘要</h2>
+    <p>请核对税项、期间、输入摘要与所用规则版本；确认后开始计算。</p>
+    <div id="confirm-summary"></div>
+    <div class="actions">
+      <button type="button" id="confirm-back" class="btn btn-secondary">返回修改</button>
+      <button type="button" id="confirm-submit" class="btn btn-primary">确认资料并计算</button>
+    </div>
+  </div>
+</div>
+
+{% include "calc_flow_script.html" %}
+{% endblock %}

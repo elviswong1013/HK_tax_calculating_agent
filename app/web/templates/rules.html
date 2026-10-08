@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}规则快照 — 香港税务计算{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>规则快照与出处</h1>
+  <span class="badge badge-neutral">当前已发布版本</span>
+  <p class="lede">所有计算都绑定单一的不可变规则快照；本页说明当前绑定与数值出处。</p>
+</div>
+
+<section class="card" aria-labelledby="rules-binding">
+  <h2 id="rules-binding">当前规则绑定</h2>
+  <dl class="facts">
+    <dt>规则束</dt><dd><code>{{ binding.bundle_id }}</code></dd>
+    <dt>规则束哈希</dt><dd><code>{{ binding.bundle_hash }}</code></dd>
+    <dt>规则 schema 版本</dt><dd>{{ binding.rules_schema_version }}</dd>
+    <dt>引擎版本</dt><dd>{{ binding.engine_version }}</dd>
+    <dt>支持年度</dt><dd>{% for y in supported_years %}{{ y.replace("_", "/") }}{% if not loop.last %}、{% endif %}{% endfor %}（2026/27 为未完结年度，按已确认规则快照适用并提示）</dd>
+  </dl>
+</section>
+
+<section class="card" aria-labelledby="rules-provenance">
+  <h2 id="rules-provenance">数值出处</h2>
+  <p>束内已入数数值均挂 T1 台账锚点（官方法例文本／官方页面／官方计算器观察，见 <code>evidence_digests</code>）；取整与计算口径以 profile 冻结进束，不随数据更新变化。</p>
+  <p class="privacy-note">规则更新经「更新」页所述管线进行：候选须通过独立验证与门禁才原子发布；检查成功不等于规则已更新。</p>
+  <p><a href="/api/v1/meta/rules">查看规则元数据（JSON）</a></p>
+</section>
+{% endblock %}

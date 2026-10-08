@@ -1,0 +1,8 @@
+# 生成产物
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.playwright-mcp/
+dist/
+build/

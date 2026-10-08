@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}印花税 — 物业（从价） — 香港税务计算{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>印花税 — 物业从价印花税（AVD）</h1>
+  <span class="badge badge-complete">已支持：可计算（已批准税项）</span>
+  <p class="lede">按文书日期适用制度表估算物业从价印花税；结果仅为估算，不是税务局评税或专业意见。</p>
+</div>
+
+<div class="status-region" role="status">计算入口：本页为说明页；计算经 API 三段确认执行（见下）。</div>
+
+<section class="card" aria-labelledby="stampp-entry">
+  <h2 id="stampp-entry">计算入口</h2>
+  <p>对应执行端点：<code>POST /api/v1/calc/stamp-duty/property</code>——先 <code>POST /api/v1/calc/prepare</code> 提交事实取得 prepared_id，再确认后执行。</p>
+  <p class="privacy-note">计税基数＝代价与价值的较高者（两者须并列提供）；2026-02-26 起住宅与非住宅分表，物业类别不明时系统追问。</p>
+</section>
+
+<section class="card" aria-labelledby="stampp-scope">
+  <h2 id="stampp-scope">覆盖说明</h2>
+  <ul>
+    <li>文书日期窗口：2024-04-01 至 2026-10-07（普通买卖协议／转易契；交换、法院命令等复杂类别不在首版范围）。</li>
+    <li>制度切换：Table 8（至 2025-02-25）、Table 9（2025-02-26 起）、2026-02-26 起住宅高端档与非住宅 Scale 3。</li>
+    <li>s78／s79(3) 过渡保留与已盖印协议后的相关转易契（固定 100 港元）按结构化谓词核验，谓词不明即追问。</li>
+  </ul>
+  {% include "tax_entries.html" %}
+</section>
+{% endblock %}

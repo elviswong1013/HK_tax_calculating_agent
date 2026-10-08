@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}薪俸税 — 香港税务计算{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>薪俸税估算</h1>
+  <span class="badge badge-complete">已支持：可计算（已批准税项）</span>
+  <p class="lede">按你确认的资料与当前规则快照估算薪俸税；结果仅为估算，不是税务局评税或专业意见。</p>
+</div>
+
+<div class="status-region" role="status">计算入口：使用下方表单入口填写事实，经「确认资料并计算」后得出结果。</div>
+
+<section class="card" aria-labelledby="salaries-entry">
+  <h2 id="salaries-entry">计算入口</h2>
+  <p>薪俸税的计算表单位于<a href="/">计算工作台</a>：填写应课税收入、强积金强制性供款与婚姻状况后确认计算。</p>
+  <p class="privacy-note">已缴暂缴税（provisional_paid）为可选事实：未提供时结果标为「部分结果」，结欠／退款一栏显示「未能估算」，不以零填补；显式填 "0" 视为已确认事实。</p>
+  <p class="privacy-note">对应执行端点：<code>POST /api/v1/calc/salaries-tax</code>（prepare→confirm→execute 三段确认）。</p>
+</section>
+
+<section class="card" aria-labelledby="salaries-scope">
+  <h2 id="salaries-scope">覆盖说明</h2>
+  <ul>
+    <li>支持期间：2024/25、2025/26、2026/27（2026/27 为未完结年度，按已确认规则快照计算并提示）。</li>
+    <li>免税额与累进/标准两径择低、强积金强制性供款扣除（附表 3B 上限）、年度宽减（附表 43）。</li>
+    <li>在册扣除逐项枚举（如长者住宿照顾开支，附表 3C）；不在附表内的扣除项（如自愿性 MPF 供款）不接受正数申索。</li>
+  </ul>
+  {% include "tax_entries.html" %}
+</section>
+{% endblock %}

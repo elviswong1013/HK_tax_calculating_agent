@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}个人入息课税 — 香港税务计算{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>个人入息课税（评税选择比较）</h1>
+  <span class="badge badge-complete">已支持：可计算（已批准税项）</span>
+  <p class="lede">个人入息课税是评税选择，不是第四个独立税种：系统比较「选择个人入息课税」与「不选择」两种合法方式的宽减后总税额。</p>
+</div>
+
+<div class="status-region" role="status">计算入口：本页为说明页；计算经 API 三段确认执行（见下）。</div>
+
+<section class="card" aria-labelledby="pa-entry">
+  <h2 id="pa-entry">计算入口</h2>
+  <p>对应执行端点：<code>POST /api/v1/personal-assessment/compare</code>——先 <code>POST /api/v1/calc/prepare</code> 提交事实取得 prepared_id，再确认后执行。</p>
+  <p class="privacy-note">资格不明（如婚姻状况未知）时不输出「最优方案」，只标注需要补充的资料；已缴暂缴税未提供时结果标为「部分结果」。</p>
+</section>
+
+<section class="card" aria-labelledby="pa-scope">
+  <h2 id="pa-scope">覆盖说明</h2>
+  <ul>
+    <li>合并入息＝薪俸净额＋逐物业（应评税净值份额−利息上限）＋业务份额；利息逐物业以应评税净值份额为上限。</li>
+    <li>标准上限按个人入息课税减少后总入息口径（附表 1 两级：2024/25 起首 500 万港元 15%、余额 16%）。</li>
+    <li>同一受养人跨人重复申索会被阻断；比较结果并列显示各方案及差额，注明并非资格裁定。</li>
+  </ul>
+  {% include "tax_entries.html" %}
+</section>
+{% endblock %}

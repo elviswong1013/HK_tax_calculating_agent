@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}设置 — 香港税务计算{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>设置</h1>
+  <span class="badge badge-neutral">服务端环境变量配置</span>
+  <p class="lede">本应用无网页端设置表单；全部配置经服务端环境变量在启动前设定，密钥永不出现在页面或日志。</p>
+</div>
+
+<section class="card" aria-labelledby="settings-model">
+  <h2 id="settings-model">模型（AI）配置</h2>
+  <dl class="facts">
+    <dt>端点</dt><dd><code>HKTAX_MODEL_ENDPOINT</code>（非秘密；OpenAI 兼容 Chat Completions）</dd>
+    <dt>模型名称</dt><dd><code>HKTAX_MODEL_NAME</code>（非秘密）</dd>
+    <dt>密钥</dt><dd><code>HKTAX_MODEL_API_KEY</code>（仅存服务端）</dd>
+  </dl>
+  <p>三者未配置或缺少密钥时，AI 功能不可用（本地表单计算完全不依赖模型）；「AI 引导」未配置时折叠为静态提示，不阻断手填。</p>
+  <p class="privacy-note">任何可能外发的内容都会先显示逐字预览；授权只允许单次发送，撤回后本地功能照常可用。</p>
+</section>
+
+<section class="card" aria-labelledby="settings-storage">
+  <h2 id="settings-storage">存储与运行</h2>
+  <dl class="facts">
+    <dt>规则数据库</dt><dd><code>HKTAX_DB_PATH</code>（缺省 <code>%LOCALAPPDATA%\hktax-agent\rules.db</code>）</dd>
+    <dt>绑定地址</dt><dd>仅回环（127.0.0.1 / localhost），非回环绑定拒绝启动；单 worker 强制</dd>
+  </dl>
+  <p class="privacy-note">无财务 localStorage、无持久缓存；会话仅存内存，清空会话即删除内存记录（已下载/打印的外部副本不受影响）。</p>
+</section>
+{% endblock %}

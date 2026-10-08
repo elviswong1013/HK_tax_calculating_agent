@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hktax-agent"
+version = "0.1.0"
+description = "HK tax calculation agent (local, deterministic)"
+requires-python = ">=3.12,<3.14"
+# Production 运行时依赖（Green 阶段加入；Gate2＋用户授权 2026-10-08）。
+# 区间＝Annex C C1 运行时依赖行；解析依赖 beautifulsoup4/pypdf 维持不增加（C1/C7.3）。
+dependencies = [
+    "fastapi>=0.115,<1",
+    "jinja2>=3.1,<4",
+    "pydantic>=2.10,<3",
+    "uvicorn>=0.30,<1",
+    "httpx>=0.27,<1",
+]
+
+# Gate2 授权（2026-10-08）+ Annex C C1 顺序：test-only 先；production 依赖 Green 阶段再加
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "hypothesis>=6",
+    "playwright>=1.45",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["web/templates/*.html"]
+
+# C1 测试接线：conftest 以同步 httpx.Client 使用 httpx.ASGITransport（async-only），
+# 由 app/testing/asgi_sync 插件补齐进程内同步桥（不新增第三方库、不改任何测试）。
+[tool.pytest.ini_options]
+addopts = "-p app.testing.asgi_sync"
+markers = ["e2e: 需要已安装 Chromium 的浏览器端到端测试（playwright install chromium）"]

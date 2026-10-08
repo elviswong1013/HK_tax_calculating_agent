@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}印花税 — 香港股票 — 香港税务计算{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>印花税 — 香港股票转让</h1>
+  <span class="badge badge-complete">已支持：可计算（已批准税项）</span>
+  <p class="lede">按每份文书独立估算香港股票转让印花税；结果仅为估算，不是税务局评税或专业意见。</p>
+</div>
+
+<div class="status-region" role="status">计算入口：本页为说明页；计算经 API 三段确认执行（见下）。</div>
+
+<section class="card" aria-labelledby="stamps-entry">
+  <h2 id="stamps-entry">计算入口</h2>
+  <p>对应执行端点：<code>POST /api/v1/calc/stamp-duty/stock</code>——先 <code>POST /api/v1/calc/prepare</code> 提交事实取得 prepared_id，再确认后执行。</p>
+  <p class="privacy-note">文书清单完整性（complete）未确认为完整时，系统只追问、不给交易总额。</p>
+</section>
+
+<section class="card" aria-labelledby="stamps-scope">
+  <h2 id="stamps-scope">覆盖说明</h2>
+  <ul>
+    <li>成交单据（contract note）：每份 sold note 与每份 bought note 各按代价或价值的 0.1%（不是取较高者），每份分别计算。</li>
+    <li>自愿在生处置：5 港元＋股票价值的 0.2%；其他转让：每份 5 港元。</li>
+    <li>2023-11-17 之前的文书规则不在首版范围；印花税无一次性税务宽减。</li>
+  </ul>
+  {% include "tax_entries.html" %}
+</section>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}规则更新 — 香港税务计算{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>更新检查</h1>
+  <span class="badge badge-neutral">检查≠发布</span>
+  <p class="lede">规则更新检查按日历月自动进行；检查只读取官方来源，不发送任何用户财务资料、不依赖模型。</p>
+</div>
+
+<section class="card" aria-labelledby="updates-cadence">
+  <h2 id="updates-cadence">检查节奏</h2>
+  <ul>
+    <li><strong>首启即查</strong>：首次启动时立即执行一次检查；逾期未查则在启动时单次合并补查。</li>
+    <li><strong>按月自动</strong>：以上一次完整成功的实际完成日为锚，按日历月计划下一次检查（月末截断）。</li>
+    <li><strong>手动检查</strong>：可随时触发「立即检查」；手动与计划检查走同一条管线，幂等（进行中返回同一作业）。</li>
+  </ul>
+  <p><a href="/api/v1/update/check">触发立即检查（POST）</a></p>
+</section>
+
+<section class="card" aria-labelledby="updates-states">
+  <h2 id="updates-states">状态语义</h2>
+  <ul>
+    <li>检查成功 ≠ 规则已更新：候选变更须通过独立验证与发布门禁，才会在单事务内原子发布并切换指针。</li>
+    <li>候选冲突、验证失败或证据不足 → 候选被隔离，现行版本保持不变；受影响期间的计算会被拒绝并说明原因。</li>
+    <li>离线但已有已核验快照时，计算可继续并附中文离线提示；官方来源标注失效的受影响期间暂停计算。</li>
+  </ul>
+  <p class="privacy-note">当前版本不可变：历史计算继续关联其原规则快照；回滚须二次确认，且不代表旧规则仍然有效。</p>
+</section>
+{% endblock %}

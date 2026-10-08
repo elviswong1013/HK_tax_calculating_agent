@@ -1,0 +1,513 @@
+<script type="module">
+  // 税项计算页共用流程（自 index.html 计算工作台的弹窗/确认模式克隆；
+  // Annex A §6/§9/§12.2/§12.3）：
+  //  - 金额一律以字符串读取与提交（AmountStr），绝不解析为浮点；
+  //  - 无本地持久存储（C5.5）；计算只经 prepare→confirm→execute 三段 API（C3.2）；
+  //  - 确认摘要对话框 role=dialog：打开焦点进入、Escape 关闭、关闭回触发控件；
+  //  - 错误摘要可聚焦并链接到首个问题字段；needs_input 追问可聚焦；
+  //  - 结果区金额直读服务器 canonical 分项，缺组件显示「未能估算」，不以零填补。
+  const form = document.getElementById("calc-form");
+  const taxType = form.dataset.taxType;
+  const executeTarget = form.dataset.executeTarget;
+  const pagePath = form.dataset.pagePath;
+
+  const statusRegion = document.getElementById("status-region");
+  const errorSummary = document.getElementById("error-summary");
+  const errorCount = document.getElementById("error-count");
+  const errorList = document.getElementById("error-list");
+  const dialog = document.getElementById("confirm-dialog");
+  const dialogPanel = dialog.querySelector(".dialog-panel");
+  const confirmSummary = document.getElementById("confirm-summary");
+  const resultSection = document.getElementById("result-section");
+  const resultBadge = document.getElementById("result-badge");
+  const resultAmounts = document.getElementById("result-amounts");
+  const resultSteps = document.getElementById("result-steps");
+  const primaryButton = document.getElementById("confirm-and-calc");
+
+  // —— 弹窗（§9；与 index.html 同款：打开焦点入、Escape 关、关闭回触发件）——
+  let dialogTrigger = null;
+  let pendingFacts = null;
+  function openDialog(trigger) {
+    dialogTrigger = trigger || null;
+    dialog.hidden = false;
+    dialogPanel.focus();
+  }
+  function closeDialog() {
+    dialog.hidden = true;
+    if (dialogTrigger) {
+      dialogTrigger.focus();
+      dialogTrigger = null;
+    }
+  }
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeDialog();
+  });
+  document.getElementById("confirm-back").addEventListener("click", () => closeDialog());
+
+  // —— 错误摘要（§6/§9：role=alert 可聚焦，条目链接到问题字段）——
+  function showError(entries) {
+    errorList.textContent = "";
+    for (const item of entries) {
+      const li = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = "#" + item.fieldId;
+      link.textContent = item.message;
+      li.appendChild(link);
+      errorList.appendChild(li);
+    }
+    errorCount.textContent = String(entries.length);
+    errorSummary.hidden = false;
+    errorSummary.focus();
+  }
+  function clearErrors() {
+    errorSummary.hidden = true;
+    errorList.textContent = "";
+  }
+
+  // —— 客户端形态检查（C2.1 客户端镜像；服务端校验仍是权威）——
+  // 非负金额（本三页所有金额字段均不接受负值；语法同 C2.1，禁千位逗号/前导零）
+  const AMOUNT_RE = /^(?:0|[1-9][0-9]{0,29})(\.[0-9]{1,2})?$/;
+  const INT_RE = /^[1-9][0-9]{0,3}$/;
+  const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+  function isAmount(text) {
+    return AMOUNT_RE.test(text);
+  }
+  function field(id) {
+    return document.getElementById(id);
+  }
+  function textValue(id) {
+    return (field(id).value || "").trim();
+  }
+  function triState(text) {
+    if (text === "true") return true;
+    if (text === "false") return false;
+    return "unknown";
+  }
+
+  // 精确十进制字符串乘法（BigInt；canonical 形：无前导零/尾零，一切零→"0"）
+  function multiplyAmount(a, b) {
+    const partsA = a.split(".");
+    const partsB = b.split(".");
+    const fracA = partsA[1] || "";
+    const fracB = partsB[1] || "";
+    const scale = fracA.length + fracB.length;
+    const product = BigInt(partsA[0] + fracA) * BigInt(partsB[0] + fracB);
+    const digits = product.toString().padStart(scale + 1, "0");
+    const cut = digits.length - scale;
+    const intPart = digits.slice(0, cut).replace(/^0+(?=[0-9])/, "");
+    const fracPart = digits.slice(cut).replace(/0+$/, "");
+    return fracPart ? intPart + "." + fracPart : intPart;
+  }
+
+  function parseIso(text) {
+    const match = DATE_RE.exec(text);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const probe = new Date(Date.UTC(year, month - 1, day));
+    if (
+      probe.getUTCFullYear() !== year ||
+      probe.getUTCMonth() !== month - 1 ||
+      probe.getUTCDate() !== day
+    ) {
+      return null;
+    }
+    return { year: year, month: month, day: day };
+  }
+
+  // 起租日 + N 个月 − 1 天（租期由文书日期起算；末日＝起租日＋N 个月的前一日）
+  function termEndIso(iso, months) {
+    const parsed = parseIso(iso);
+    const totalMonths = parsed.year * 12 + (parsed.month - 1) + months;
+    const endYear = Math.floor(totalMonths / 12);
+    const endMonth = (totalMonths % 12) + 1;
+    const lastDay = new Date(Date.UTC(endYear, endMonth, 0)).getUTCDate();
+    const end = new Date(Date.UTC(endYear, endMonth - 1, Math.min(parsed.day, lastDay)));
+    end.setUTCDate(end.getUTCDate() - 1);
+    return end.toISOString().slice(0, 10);
+  }
+
+  const TRI_STATE_TEXT = {
+    true: "是",
+    false: "否",
+    unknown: "不确定（需要补充资料）",
+  };
+  const ENTITY_KIND_TEXT = {
+    sole_proprietorship: "独资（非法团）",
+    corporation: "法团（有限公司）",
+  };
+  function yearText(year) {
+    return year.replace("_", "/");
+  }
+  function amountText(text) {
+    return text + " 港元";
+  }
+
+  // —— 每页事实收集（Annex C C3.5 字段名即契约）。收集失败＝已显示错误摘要，
+  // 返回 null；成功返回 { facts, summary }（summary＝[名称, 值] 摘要对）。——
+  function collectProfits() {
+    const entries = [];
+    const year = textValue("assessment-year");
+    const kind = textValue("entity-kind");
+    const profit = textValue("assessable-profit");
+    const election = textValue("two-tier-election");
+    const noOther = textValue("no-other-election");
+    const connected = textValue("connected-entities-declaration");
+    if (!profit) {
+      entries.push({ fieldId: "assessable-profit", message: "应评税利润未填写；请输入数字，不要留空。" });
+    } else if (!isAmount(profit)) {
+      entries.push({ fieldId: "assessable-profit", message: "应评税利润语法非法：请输入规范金额（数字，可含小数；无千位逗号；不以 0 开头）。" });
+    }
+    if (!election) {
+      entries.push({ fieldId: "two-tier-election", message: "请确认本年度是否选择两级制（三态选择，不默认）。" });
+    }
+    if (!noOther) {
+      entries.push({ fieldId: "no-other-election", message: "请确认是否无其他关联实体选择两级制（三态选择，不默认）。" });
+    }
+    if (!connected) {
+      entries.push({ fieldId: "connected-entities-declaration", message: "请声明基期结束时的关联实体（无关联实体也须声明空列表，D4.2）。" });
+    }
+    if (entries.length) {
+      showError(entries);
+      return null;
+    }
+    const twoTier = {
+      election_made: { value: triState(election) },
+      no_other_election_same_year: { value: triState(noOther) },
+    };
+    let connectedText = TRI_STATE_TEXT.unknown;
+    if (connected === "none") {
+      // 空列表声明（无关联实体）：显式 []，缺失≠空列表
+      twoTier.connected_entities = [];
+      connectedText = "无（声明空列表）";
+    }
+    const facts = {
+      year_of_assessment: year,
+      entity_kind: kind,
+      assessable_profit: profit,
+      two_tier: twoTier,
+    };
+    const summary = [
+      ["税项", "利得税"],
+      ["课税年度", yearText(year)],
+      ["主体类别", ENTITY_KIND_TEXT[kind] || kind],
+      ["应评税利润", amountText(profit)],
+      ["是否选择两级制", TRI_STATE_TEXT[triState(election)]],
+      ["无其他关联实体", TRI_STATE_TEXT[triState(noOther)]],
+      ["关联实体声明", connectedText],
+      ["规则版本", "当前已发布规则快照"],
+    ];
+    return { facts: facts, summary: summary };
+  }
+
+  function collectProperty() {
+    const entries = [];
+    const year = textValue("assessment-year");
+    const rent = textValue("rent-received");
+    const ratesAmount = textValue("rates-amount");
+    const ratesAgreed = textValue("rates-agreed");
+    const ratesPaid = textValue("rates-actually-paid");
+    const irrecoverable = textValue("irrecoverable-rent");
+    const depositOffsets = textValue("deposit-offsets");
+    if (!rent) {
+      entries.push({ fieldId: "rent-received", message: "租金收入未填写；请输入数字，不要留空。" });
+    } else if (!isAmount(rent)) {
+      entries.push({ fieldId: "rent-received", message: "租金收入语法非法：请输入规范金额（数字，可含小数；无千位逗号；不以 0 开头）。" });
+    }
+    if (ratesAmount && !isAmount(ratesAmount)) {
+      entries.push({ fieldId: "rates-amount", message: "差饷金额语法非法：请输入规范金额，或留空表示未申报。" });
+    }
+    if (ratesAmount && (!ratesAgreed || !ratesPaid)) {
+      // 正数差饷而两条件未确认 → 服务端亦会追问；此处提前指出缺项
+      if (!ratesAgreed) entries.push({ fieldId: "rates-agreed", message: "已申报差饷金额，请确认业主是否同意缴付（s.5(1A)(b)(i)）。" });
+      if (!ratesPaid) entries.push({ fieldId: "rates-actually-paid", message: "已申报差饷金额，请确认差饷是否已实际缴付（s.5(1A)(b)(i)）。" });
+    }
+    if (irrecoverable && !isAmount(irrecoverable)) {
+      entries.push({ fieldId: "irrecoverable-rent", message: "不可追回租金语法非法：请输入规范金额，或留空表示未申报。" });
+    }
+    if (depositOffsets && !isAmount(depositOffsets)) {
+      entries.push({ fieldId: "deposit-offsets", message: "按金抵销语法非法：请输入规范金额，或留空表示未申报。" });
+    }
+    if (entries.length) {
+      showError(entries);
+      return null;
+    }
+    const entry = { property_id: "p-1", rent_received: rent };
+    // 差饷三态未申报（三项全空）＝无扣除（Q7 口径，引擎缺省即零）；任一申报
+    // 则整组按已提供事实提交（金额缺省填 "0"；两条件留空由服务端追问）。
+    let ratesText = "未申报（无扣除，Q7 口径）";
+    if (ratesAmount || ratesAgreed || ratesPaid) {
+      const rates = {};
+      if (ratesAmount) {
+        rates.amount = ratesAmount;
+        ratesText = "金额 " + amountText(ratesAmount);
+      } else {
+        rates.amount = "0";
+        ratesText = "金额 0 港元";
+      }
+      if (ratesAgreed) {
+        rates.agreed = { value: triState(ratesAgreed) };
+        ratesText += "；同意缴付：" + TRI_STATE_TEXT[triState(ratesAgreed)];
+      }
+      if (ratesPaid) {
+        rates.actually_paid = { value: triState(ratesPaid) };
+        ratesText += "；已实际缴付：" + TRI_STATE_TEXT[triState(ratesPaid)];
+      }
+      entry.rates_paid_by_owner = rates;
+    }
+    let irrecoverableText = "未申报";
+    if (irrecoverable) {
+      entry.irrecoverable_rent = irrecoverable;
+      irrecoverableText = amountText(irrecoverable);
+    }
+    let depositText = "未申报";
+    if (depositOffsets) {
+      entry.deposit_offsets = depositOffsets;
+      depositText = amountText(depositOffsets);
+    }
+    const facts = {
+      year_of_assessment: year,
+      properties: [entry],
+    };
+    const summary = [
+      ["税项", "物业税"],
+      ["课税年度", yearText(year)],
+      ["租金收入", amountText(rent)],
+      ["差饷（同意缴付＋已实际缴付）", ratesText],
+      ["不可追回租金", irrecoverableText],
+      ["按金抵销", depositText],
+      ["规则版本", "当前已发布规则快照"],
+    ];
+    return { facts: facts, summary: summary };
+  }
+
+  function collectLease() {
+    const entries = [];
+    const instrumentDate = textValue("instrument-date");
+    const monthlyRent = textValue("monthly-rent");
+    const months = textValue("term-months");
+    const premium = textValue("premium");
+    const deposit = textValue("deposit");
+    if (!instrumentDate) {
+      entries.push({ fieldId: "instrument-date", message: "文书日期未填写；请输入 YYYY-MM-DD。" });
+    } else if (!parseIso(instrumentDate)) {
+      entries.push({ fieldId: "instrument-date", message: "文书日期须为有效日历日期（YYYY-MM-DD 全匹配）。" });
+    }
+    if (!monthlyRent) {
+      entries.push({ fieldId: "monthly-rent", message: "月租未填写；请输入数字，不要留空。" });
+    } else if (!isAmount(monthlyRent)) {
+      entries.push({ fieldId: "monthly-rent", message: "月租语法非法：请输入规范金额（数字，可含小数；无千位逗号；不以 0 开头）。" });
+    }
+    if (!months) {
+      entries.push({ fieldId: "term-months", message: "租期（月）未填写；请输入正整数月数。" });
+    } else if (!INT_RE.test(months)) {
+      entries.push({ fieldId: "term-months", message: "租期（月）须为正整数月数（不超过 9999）。" });
+    }
+    if (!premium) {
+      // D3.1：premium 缺失≠零，不得静默按零计税；无 premium 请显式填 "0"
+      entries.push({ fieldId: "premium", message: "非租金代价（premium）必须显式填写；无 premium 请填 0，缺失不等于零。" });
+    } else if (!isAmount(premium)) {
+      entries.push({ fieldId: "premium", message: "非租金代价（premium）语法非法：请输入规范金额（无则填 0）。" });
+    }
+    if (deposit && !isAmount(deposit)) {
+      entries.push({ fieldId: "deposit", message: "按金语法非法：请输入规范金额，或留空表示未申报。" });
+    }
+    if (entries.length) {
+      showError(entries);
+      return null;
+    }
+    const termStart = instrumentDate;
+    const termEnd = termEndIso(instrumentDate, Number(months));
+    const totalRent = multiplyAmount(monthlyRent, months);
+    const facts = {
+      instrument_date: instrumentDate,
+      term_kind: "fixed",
+      term_start: termStart,
+      term_end: termEnd,
+      rent_input_mode: "total_rent",
+      total_rent: totalRent,
+      premium: premium,
+    };
+    if (deposit) facts.deposit = deposit;
+    const summary = [
+      ["税项", "印花税 — 租约"],
+      ["文书日期", instrumentDate],
+      ["租期", termStart + " 至 " + termEnd + "（" + months + " 个月）"],
+      ["月租", amountText(monthlyRent)],
+      ["租期内总租金", amountText(totalRent) + "（月租×月数）"],
+      ["非租金代价（premium）", amountText(premium)],
+      ["按金", deposit ? amountText(deposit) + "（仅记录，不计入）" : "未申报"],
+      ["规则版本", "当前已发布规则快照"],
+    ];
+    return { facts: facts, summary: summary };
+  }
+
+  const COLLECTORS = {
+    profits_tax: collectProfits,
+    property_tax: collectProperty,
+    stamp_lease: collectLease,
+  };
+
+  // —— 结果渲染（C3.3/C3.4 四状态徽标＋金额直读；§12.4 缺组件不填零）——
+  const STATUS_BADGES = {
+    complete: ["估算完成", "badge-complete"],
+    partial: ["部分结果", "badge-partial"],
+    needs_input: ["需要补充资料", "badge-needs-input"],
+    blocked: ["暂不可计算", "badge-blocked"],
+  };
+  const AMOUNT_LABELS = [
+    ["before_reduction", "宽减前税款"],
+    ["reduction", "年度宽减"],
+    ["final_after_reduction", "最终税款"],
+    ["provisional_paid", "已缴暂缴税"],
+    ["next_provisional", "下年度暂缴税"],
+    ["balance", "结欠／退税（正＝欠款，负＝估算退税）"],
+  ];
+
+  function renderResult(payload) {
+    resultSection.hidden = false;
+    const badge = STATUS_BADGES[payload.status] || [payload.status || "未知状态", ""];
+    resultBadge.className = "badge" + (badge[1] ? " " + badge[1] : "");
+    resultBadge.textContent = badge[0];
+    resultAmounts.textContent = "";
+    resultSteps.textContent = "";
+    const amounts = payload.amounts || {};
+    for (const pair of AMOUNT_LABELS) {
+      const dt = document.createElement("dt");
+      const dd = document.createElement("dd");
+      dt.textContent = pair[1];
+      dd.textContent = amounts[pair[0]] == null ? "未能估算" : amounts[pair[0]] + " 港元";
+      resultAmounts.appendChild(dt);
+      resultAmounts.appendChild(dd);
+    }
+    const steps = Array.isArray(payload.steps) ? payload.steps : [];
+    if (steps.length) {
+      const heading = document.createElement("h3");
+      heading.textContent = "计算步骤";
+      const list = document.createElement("ol");
+      for (const step of steps) {
+        const li = document.createElement("li");
+        li.textContent = step.label;
+        list.appendChild(li);
+      }
+      resultSteps.appendChild(heading);
+      resultSteps.appendChild(list);
+    }
+    const questions = Array.isArray(payload.questions) ? payload.questions : [];
+    if (questions.length) {
+      // needs_input 追问：入可聚焦错误摘要（§6/§9；不以零或猜测填补）
+      showError(questions.map((question) => ({ fieldId: "status-region", message: question })));
+      statusRegion.textContent = "需要补充资料：请按追问确认事实后重新计算（结果不填零、不猜测）。";
+    } else if (payload.status === "blocked") {
+      showError([{ fieldId: "status-region", message: payload.blocked_reason || "该期间暂不可计算。" }]);
+      statusRegion.textContent = "暂不可计算：" + (payload.blocked_reason || "");
+    } else {
+      clearErrors();
+      statusRegion.textContent =
+        "计算完成（" + badge[0] + "）。结果仅为估算，不是税务局评税或专业意见。";
+    }
+  }
+
+  // —— 三段计算（C3.2：prepare→confirm→execute；CSRF 能力经页面 GET 获取）——
+  let csrfPromise = null;
+  function csrfToken() {
+    if (csrfPromise === null) {
+      csrfPromise = fetch(pagePath, { method: "GET", credentials: "same-origin" })
+        .then((response) => response.headers.get("X-CSRF-Token") || "")
+        .catch(() => "");
+    }
+    return csrfPromise;
+  }
+  async function postJSON(url, body) {
+    const token = await csrfToken();
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+      body: JSON.stringify(body),
+    });
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (err) {
+      payload = null;
+    }
+    if (!response.ok) {
+      const detail = (payload && payload.error) || {};
+      const problem = new Error(detail.message_zh || "请求失败（HTTP " + response.status + "）");
+      problem.code = detail.code || "";
+      throw problem;
+    }
+    return payload;
+  }
+  async function runCalculation(facts) {
+    statusRegion.textContent = "正在提交事实（prepare）……";
+    const prepared = await postJSON("/api/v1/calc/prepare", {
+      tax_type: taxType,
+      schema_version: "1.0.0",
+      input: facts,
+    });
+    statusRegion.textContent = "正在确认（confirm）……";
+    const confirmed = await postJSON("/api/v1/calc/confirm", {
+      prepared_id: prepared.prepared_id,
+      canonical_input_hash: prepared.input_hash,
+      expected_binding: prepared.expected_binding,
+      acknowledge: true,
+    });
+    statusRegion.textContent = "正在计算（execute）……";
+    const payload = await postJSON(executeTarget, { confirmation_id: confirmed.confirmation_id });
+    renderResult(payload);
+  }
+
+  // —— 接线：表单提交 → 摘要对话框；对话框确认 → 三段计算 ——
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    clearErrors();
+    resultSection.hidden = true;
+    const collected = COLLECTORS[taxType]();
+    if (collected === null) {
+      pendingFacts = null;
+      statusRegion.textContent = "资料未确认；请按错误摘要修正后再计算。";
+      return;
+    }
+    pendingFacts = collected.facts;
+    confirmSummary.textContent = "";
+    const dl = document.createElement("dl");
+    dl.className = "facts";
+    for (const pair of collected.summary) {
+      const dt = document.createElement("dt");
+      const dd = document.createElement("dd");
+      dt.textContent = pair[0];
+      dd.textContent = pair[1];
+      dl.appendChild(dt);
+      dl.appendChild(dd);
+    }
+    confirmSummary.appendChild(dl);
+    openDialog(primaryButton);
+  });
+  document.getElementById("check-input").addEventListener("click", () => {
+    clearErrors();
+    resultSection.hidden = true;
+    const collected = COLLECTORS[taxType]();
+    statusRegion.textContent =
+      collected === null
+        ? "资料未确认；请按错误摘要修正。"
+        : "资料形态检查通过；按「确认资料并计算」开始三段确认。";
+  });
+  document.getElementById("confirm-submit").addEventListener("click", async () => {
+    const facts = pendingFacts;
+    closeDialog();
+    if (!facts) return;
+    primaryButton.disabled = true;
+    try {
+      await runCalculation(facts);
+    } catch (err) {
+      const suffix = err.code ? "（" + err.code + "）" : "";
+      showError([{ fieldId: "status-region", message: err.message + suffix }]);
+      statusRegion.textContent = "计算未能完成：" + err.message;
+    } finally {
+      primaryButton.disabled = false;
+    }
+  });
+</script>
