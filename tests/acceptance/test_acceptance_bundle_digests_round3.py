@@ -27,6 +27,7 @@ REQ-13（record 官方出处直读束证据）。
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import re
 from pathlib import Path
@@ -36,9 +37,11 @@ DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 HASH_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 # 台账 §8 引用的本地保存官方快照（页面取证件）＋官方 fixture 目录
+# ＋仓库内跟踪的快照归档（*.yml.gz，CI 检出后亦可实算复核；解压字节与原快照一致）
 LOCAL_SNAPSHOT_GLOBS = (
     ".playwright-mcp/*.yml",
     "tests/fixtures/official/*",
+    "tests/fixtures/official/snapshots/*",
 )
 
 # 本地快照抓取日（文件名内嵌 2026-10-08；台账 §8 同日直读）
@@ -49,10 +52,14 @@ def _local_snapshot_hashes() -> set[str]:
     hashes: set[str] = set()
     for pattern in LOCAL_SNAPSHOT_GLOBS:
         for path in REPO_ROOT.glob(pattern):
-            if path.is_file():
-                hashes.add(
-                    "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-                )
+            if not path.is_file():
+                continue
+            data = (
+                gzip.decompress(path.read_bytes())
+                if path.suffix == ".gz"
+                else path.read_bytes()
+            )
+            hashes.add("sha256:" + hashlib.sha256(data).hexdigest())
     return hashes
 
 
