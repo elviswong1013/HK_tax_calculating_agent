@@ -242,6 +242,45 @@
       overflow-wrap: anywhere;
     }
 
+    /* AI 对话面板（§7/§9/§12.5）：消息区、逐条状态徽标、服务端 env 清单。
+       宽度全部流式（无固定 width），窄视口无横向滚动（§4） */
+    .chat-messages {
+      list-style: none;
+      margin: 12px 0 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+    .chat-entry {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 12px;
+      overflow-wrap: anywhere;
+    }
+    .chat-entry-assistant { border-inline-start: 4px solid var(--notice); }
+    .chat-entry-tool { border-inline-start: 4px solid var(--accent); }
+    .chat-entry-notice { border-inline-start: 4px solid var(--muted); }
+    .chat-text { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .badge-sent { border-color: var(--accent); color: var(--accent-strong); }
+    .badge-sent::before { content: "●"; }
+    .badge-unconfirmed { border-color: var(--notice); color: var(--notice); }
+    .badge-unconfirmed::before { content: "◐"; }
+    .badge-pending { border-color: var(--notice); color: var(--notice); }
+    .badge-pending::before { content: "▲"; }
+    .badge-notice::before { content: "◆"; }
+    .env-list { margin: 8px 0 0; padding-inline-start: 20px; }
+    .env-list code {
+      background: var(--canvas);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+
     footer {
       border-block-start: 1px solid var(--line);
       color: var(--muted);
@@ -372,10 +411,29 @@
       <div class="col-side">
         <section class="card" aria-labelledby="ai-title">
           <h2 id="ai-title">AI 引导（可选）</h2>
+          {% if model_configured %}
+          <p id="ai-state">本地计算可用；AI 已配置：发送前先显示逐字预览，授权只允许单次发送。</p>
+          <p>模型回复仅供参考，一律标「未确认」；工具建议以「待你确认」呈现，不替代你对输入与结果的确认。</p>
+          {% else %}
           <p id="ai-state">本地计算可用；AI 未连接／未授权。</p>
-          <p>AI 尚未配置。你仍可填写表格并在本机计算。</p>
+          <p>AI 尚未配置。你仍可填写表格并在本机计算。如需启用 AI 引导，请在服务端设置以下环境变量（密钥只保存在服务端环境，不会出现在页面）后重启本工具：</p>
+          <ul class="env-list">
+            <li><code>HKTAX_MODEL_ENDPOINT</code></li>
+            <li><code>HKTAX_MODEL_NAME</code></li>
+          </ul>
+          <p class="privacy-note">服务端密钥环境变量的名称见 <a href="/settings">设置页</a> 与 README（密钥只保存在服务端环境，不会出现在页面）。</p>
+          {% endif %}
           <p class="privacy-note">任何可能外发的内容都会先显示逐字预览；授权只允许单次发送，拒绝后本地功能照常可用。</p>
-          <button type="button" id="open-consent" class="btn btn-secondary">预览并授权 AI 发送</button>
+          <ul id="chat-messages" class="chat-messages" aria-live="polite"></ul>
+          <div class="field">
+            <label for="chat-input">你的问题</label>
+            <textarea id="chat-input" rows="3" autocomplete="off"
+                      aria-describedby="chat-input-hint"></textarea>
+            <p class="hint" id="chat-input-hint">按「发送」先查看将外发的逐字预览；授权后只发送一次。对话上下文（含此前问答）会一并预览并发送。</p>
+          </div>
+          <div class="actions">
+            <button type="button" id="chat-send" class="btn btn-primary">发送</button>
+          </div>
         </section>
 
         <section class="card" aria-labelledby="status-title">
@@ -486,18 +544,212 @@
         if (event.key === "Escape") closeDialog(dialog);
       });
     }
-    document.getElementById("open-consent").addEventListener("click", (event) => {
-      openDialog(document.getElementById("consent-dialog"), event.currentTarget);
-    });
-    for (const id of ["consent-back", "consent-deny"]) {
-      document.getElementById(id).addEventListener("click", () => {
-        closeDialog(document.getElementById("consent-dialog"));
-      });
+
+    // —— 安全 POST 助手：CSRF 能力经安全 GET 探测（C5.2/C5.3，同「清空本次资料」
+    // 既有接线模式）；浏览器对同源 POST 自动附 Origin ——
+    let csrfToken = null;
+    async function csrfTokenOnce() {
+      if (csrfToken === null) {
+        const probe = await fetch("/", { method: "GET", credentials: "same-origin" });
+        csrfToken = probe.headers.get("X-CSRF-Token") || "";
+      }
+      return csrfToken;
     }
-    document.getElementById("consent-allow").addEventListener("click", () => {
-      statusRegion.textContent = "已授权本次发送（单次使用）。任何内容变化都须重新预览。";
-      closeDialog(document.getElementById("consent-dialog"));
+    async function httpJson(method, path, body) {
+      const token = await csrfTokenOnce();
+      const options = { method, credentials: "same-origin", headers: { "X-CSRF-Token": token } };
+      if (body !== undefined) {
+        options.headers["Content-Type"] = "application/json";
+        options.body = JSON.stringify(body);
+      }
+      return fetch(path, options);
+    }
+
+    // —— AI 对话面板（REQ-14 §7/§12.5：预览→授权→单次发送；拒绝/错误后本地照常）——
+    // 金额一律以字符串原样展示；模型内容只以 textContent 写入，绝不当作标记语言渲染。
+    const consentDialog = document.getElementById("consent-dialog");
+    const consentAllow = document.getElementById("consent-allow");
+    const chatInput = document.getElementById("chat-input");
+    const chatSend = document.getElementById("chat-send");
+    const chatMessages = document.getElementById("chat-messages");
+    // 对话历史与待用预览仅存内存，随页面消亡（无任何本地持久化，C5.5）
+    const chatHistory = [];
+    let pendingPreview = null;
+
+    function addChatEntry(tagText, tagClass, text, modifierClass) {
+      const item = document.createElement("li");
+      item.className = modifierClass ? "chat-entry " + modifierClass : "chat-entry";
+      const tag = document.createElement("span");
+      tag.className = tagClass ? "badge " + tagClass : "badge";
+      tag.textContent = tagText;
+      item.appendChild(tag);
+      const para = document.createElement("p");
+      para.className = "chat-text";
+      para.textContent = text;
+      item.appendChild(para);
+      chatMessages.appendChild(item);
+    }
+    function announce(text) {
+      addChatEntry("提示", "badge-notice", text, "chat-entry-notice");
+    }
+    async function readError(response) {
+      try {
+        const body = await response.json();
+        if (body && body.error) {
+          return { code: body.error.code || "", message_zh: body.error.message_zh || "" };
+        }
+      } catch (err) {
+        // 响应体非 JSON：按未知错误处理，由调用方兜底文案提示
+      }
+      return { code: "", message_zh: "" };
+    }
+    function fillConsentDialog(preview) {
+      const payload = preview.payload || {};
+      // 接收方如实显示；未配置时不虚构接收方（§7）
+      document.getElementById("consent-endpoint").textContent = payload.endpoint
+        ? payload.endpoint + (payload.model ? "（模型：" + payload.model + "）" : "")
+        : "未配置（本机模式）";
+      document.getElementById("consent-bytes").textContent = String(preview.payload_bytes);
+      document.getElementById("consent-hash").textContent = preview.payload_sha256;
+      document.getElementById("consent-payload").textContent = JSON.stringify(payload, null, 2);
+    }
+    function lastUserContent(messages) {
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        if (messages[i].role === "user") return messages[i].content;
+      }
+      return "";
+    }
+    function describeToolResult(entry) {
+      // 工具建议/结果只转写为纯文本建议（对话不取代输入确认，§6）
+      if (!entry || typeof entry !== "object") return "";
+      const parts = [];
+      if (typeof entry.name === "string" && entry.name) parts.push("工具：" + entry.name);
+      if (entry.outcome) parts.push("状态：" + entry.outcome);
+      if (entry.result !== undefined) {
+        parts.push(
+          typeof entry.result === "string"
+            ? entry.result
+            : JSON.stringify(entry.result, null, 2)
+        );
+      }
+      return parts.join("\n");
+    }
+
+    // 发送：先预览（绝不先发送再补告知）；输入在成功发送前一律保留
+    async function handleSend() {
+      if (chatSend.disabled) return;
+      const question = chatInput.value.trim();
+      if (!question) {
+        announce("请先输入你的问题，再按「发送」。");
+        chatInput.focus();
+        return;
+      }
+      chatSend.disabled = true;
+      try {
+        const messages = chatHistory.concat([{ role: "user", content: question }]);
+        const response = await httpJson("POST", "/api/v1/ai/consent/preview", { messages });
+        if (!response.ok) {
+          const err = await readError(response);
+          announce(err.message_zh || "无法生成外发预览；内容未发送，本地计算不受影响。");
+          return;
+        }
+        const preview = await response.json();
+        pendingPreview = { consent_id: preview.consent_id, messages };
+        fillConsentDialog(preview);
+        openDialog(consentDialog, chatSend);
+      } catch (err) {
+        announce("网络异常：预览未生成，内容未发送；本地计算不受影响。");
+      } finally {
+        chatSend.disabled = false;
+      }
+    }
+    chatSend.addEventListener("click", handleSend);
+
+    // 授权后单次发送：授予 → 发送 → 渲染回复（一次授权只对应一次发送）
+    async function handleAllow() {
+      if (!pendingPreview || consentAllow.disabled) return;
+      const preview = pendingPreview;
+      consentAllow.disabled = true;
+      document.getElementById("consent-back").disabled = true;
+      document.getElementById("consent-deny").disabled = true;
+      try {
+        const grant = await httpJson("POST", "/api/v1/ai/consent", {
+          consent_id: preview.consent_id,
+        });
+        if (!grant.ok) {
+          finishRoundWithError(await readError(grant));
+          return;
+        }
+        const sent = await httpJson("POST", "/api/v1/ai/chat", {
+          consent_id: preview.consent_id,
+          messages: preview.messages,
+        });
+        if (!sent.ok) {
+          finishRoundWithError(await readError(sent));
+          return;
+        }
+        finishRoundWithSuccess(await sent.json(), preview);
+      } catch (err) {
+        finishRoundWithError({ code: "", message_zh: "" });
+      } finally {
+        consentAllow.disabled = false;
+        document.getElementById("consent-back").disabled = false;
+        document.getElementById("consent-deny").disabled = false;
+      }
+    }
+    function finishRoundWithSuccess(data, preview) {
+      pendingPreview = null; // 单次授权已消费；下一轮必须重新预览并授权
+      closeDialog(consentDialog);
+      const question = lastUserContent(preview.messages);
+      chatHistory.push({ role: "user", content: question });
+      addChatEntry("已发送", "badge-sent", question, "chat-entry-user");
+      if (typeof data.content === "string" && data.content) {
+        addChatEntry("未确认", "badge-unconfirmed", data.content, "chat-entry-assistant");
+      }
+      chatHistory.push({ role: "assistant", content: data.content === undefined ? null : data.content });
+      const results = Array.isArray(data.tool_results) ? data.tool_results : [];
+      for (const entry of results) {
+        addChatEntry("待你确认", "badge-pending", describeToolResult(entry), "chat-entry-tool");
+      }
+      chatInput.value = "";
+    }
+    function finishRoundWithError(err) {
+      pendingPreview = null; // 任何失效/失败：旧预览一律作废，绝不自动补发
+      closeDialog(consentDialog);
+      if (err.code === "E_CONSENT_STALE" || err.code === "E_CONSENT_REQUIRED") {
+        announce("授权已失效或内容已变化：请重新预览并授权。内容未发送，本地计算不受影响。");
+        return;
+      }
+      if (err.code === "E_MODEL_UNCONFIGURED") {
+        announce("AI 尚未配置，本次未发送；你仍可填写表格并在本机计算。");
+        return;
+      }
+      if (
+        err.code === "E_MODEL_TIMEOUT" || err.code === "E_MODEL_AUTH"
+        || err.code === "E_MODEL_RATE_LIMIT" || err.code === "E_MODEL_BAD_RESPONSE"
+      ) {
+        announce("模型暂时没有回应；你的资料和计算结果未受影响。可重试，或继续使用表格。");
+        return;
+      }
+      announce(
+        err.message_zh
+          || "模型暂时没有回应；你的资料和计算结果未受影响。可重试，或继续使用表格。"
+      );
+    }
+    consentAllow.addEventListener("click", handleAllow);
+    document.getElementById("consent-back").addEventListener("click", () => {
+      pendingPreview = null; // 返回修改＝放弃本次预览；下次发送重新预览
+      closeDialog(consentDialog);
     });
+    document.getElementById("consent-deny").addEventListener("click", () => {
+      pendingPreview = null; // 拒绝＝不授予：内容不发送，本地功能照常
+      closeDialog(consentDialog);
+      announce("已选择不发送：内容未发送，本地计算照常可用。");
+    });
+    consentDialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") pendingPreview = null; // 关闭即作废预览
+    });
+
     document.getElementById("calc-form").addEventListener("submit", (event) => {
       event.preventDefault();
       openDialog(document.getElementById("confirm-dialog"), document.getElementById("confirm-and-calc"));

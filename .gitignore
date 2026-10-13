@@ -6,3 +6,8 @@ __pycache__/
 .playwright-mcp/
 dist/
 build/
+
+# 本地环境/秘密（绝不提交）
+.env
+.env.*
+!.env.example
