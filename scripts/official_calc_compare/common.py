@@ -27,6 +27,7 @@ class CaseResult:
     steps: list[str] = field(default_factory=list)
     official_raw: str = ""  # original text displayed by the official page
     official_value: str | None = None  # parsed official amount (canonical digits)
+    official_provisional: str | None = None  # official "Provisional tax" line item, if the page shows one (None = absent, honestly)
     extra_observations: list[str] = field(default_factory=list)
     screenshots: list[str] = field(default_factory=list)
     error: str | None = None

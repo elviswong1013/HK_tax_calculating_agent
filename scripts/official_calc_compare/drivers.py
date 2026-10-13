@@ -139,10 +139,23 @@ def drive_salaries_year(context, year_label: str, year_dir: str,
                 "no 2026/27 Schedule 43 entry); before=final=value, reduction=0"
             )
         case.official_value = after or before
+        provisional = _provisional_row(raw)
+        case.official_provisional = provisional
         case.extra_observations.append(
             f"parsed from displayed rows: before_reduction={before or 'n/a'}, "
             f"final_after_reduction={after or 'n/a'}"
         )
+        if provisional is not None:
+            case.extra_observations.append(
+                f"official page shows a provisional-tax line: value={provisional} "
+                "(line text recorded in the result excerpt above)"
+            )
+        else:
+            case.extra_observations.append(
+                "official result page shows NO provisional-tax line item ('Provisional "
+                "tax for the following year' absent from the rendered eoutdis.htm text; "
+                "the page computes current-year tax only) - recorded as-is, not filled in"
+            )
         if "two-tiered standard rates" in raw:
             case.extra_observations.append("official page shows the '*At two-tiered standard rates' remark -> standard-rate path chosen")
         else:
@@ -185,6 +198,25 @@ def _salary_rows(text: str) -> tuple[str | None, str | None, str | None]:
         else:
             bare = val
     return before, after, bare
+
+
+def _provisional_row(text: str) -> str | None:
+    """Parse a 'Provisional tax ...' line from the official result text, if any.
+
+    The IRD salaries calculator result page is expected by some to carry a
+    "Provisional tax for the following year" item; as far as the live pages
+    show, it does not.  This parser reads whatever provisional line the page
+    does render (any line mentioning 'provisional' with a trailing amount);
+    returning None when none exists is itself the recorded finding - the
+    absence is never fabricated into a value.
+    """
+    for line in text.splitlines():
+        if "provisional" not in line.lower():
+            continue
+        m = re.search(r"([\d,]+)\s*$", line.strip())
+        if m:
+            return normalize_amount(m.group(1))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +374,149 @@ def drive_lease_case(context, total_rent: str, monthly_equiv: str,
         case.official_value = normalize_amount(value)
         page.screenshot(path=f"{screenshot_prefix}_result.png", full_page=True)
         case.shot(f"{screenshot_prefix}_result.png")
+        case.finish(ok=bool(case.official_value))
+    except Exception as exc:  # noqa: BLE001
+        case.finish(ok=False, error=repr(exc))
+        try:
+            page.screenshot(path=f"{screenshot_prefix}_error.png", full_page=True)
+            case.shot(f"{screenshot_prefix}_error.png")
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        page.close()
+    return case
+
+
+# ---------------------------------------------------------------------------
+# 4. IRD share-transfer (stock) stamp duty calculator (sdshare.htm),
+#    entered from the GovHK eTax entry page - task 002 extension item B.
+#    Research note: the task brief expected NO official stock calculator to
+#    exist; the live investigation found the opposite and is recorded in the
+#    002 report - GovHK eTax carries "Stamp Duty Computation (Share Transfer
+#    Document)" linking this official IRD calculator, so the comparison is
+#    done live per the task's "if it exists" branch.
+# ---------------------------------------------------------------------------
+
+GOVHK_STOCK_ENTRY = (
+    "https://www.gov.hk/en/residents/taxes/etax/services/share_transfer_computation.htm"
+)
+SHARE_CALC_URL = "https://www.ird.gov.hk/eng/ese/sd_comp/sdshare.htm"
+
+
+def drive_govhk_stock_entry(context, screenshot_prefix: str) -> CaseResult:
+    """Open the GovHK share-transfer entry page and click through to sdshare.htm."""
+    case = CaseResult(name="govhk_stock_entry", url=GOVHK_STOCK_ENTRY, started_at=hkt_now())
+    page, _rec = _new_page(context)
+    try:
+        case.step(f"goto {GOVHK_STOCK_ENTRY} (official GovHK eTax entry page; domcontentloaded + 1 retry)")
+        try:
+            page.goto(GOVHK_STOCK_ENTRY, wait_until="domcontentloaded", timeout=90_000)
+        except Exception:  # noqa: BLE001 - heavy portal page; retry once
+            case.step("goto timed out; retrying once")
+            page.goto(GOVHK_STOCK_ENTRY, wait_until="domcontentloaded", timeout=90_000)
+        page.wait_for_timeout(800)  # let the link anchors settle
+        page.screenshot(path=f"{screenshot_prefix}_entry.png", full_page=True)
+        case.shot(f"{screenshot_prefix}_entry.png")
+
+        link = page.locator("a", has_text="Share Transfer Document")
+        case.step("click the linked calculator: 'Share Transfer Document' -> IRD sdshare.htm")
+        pages_before = set(context.pages)
+        shot_page = page
+        try:
+            with page.expect_navigation(wait_until="load", timeout=20_000):
+                link.first.click()
+            landed = page.url
+        except Exception:  # noqa: BLE001 - the link may open a popup tab instead
+            popups = [pg for pg in context.pages if pg not in pages_before]
+            if not popups:
+                raise
+            shot_page = popups[-1]
+            try:
+                shot_page.wait_for_load_state("load", timeout=30_000)
+            except Exception:  # noqa: BLE001
+                shot_page.wait_for_load_state("domcontentloaded", timeout=30_000)
+            case.extra_observations.append("link opened the calculator in a new tab (popup)")
+            landed = shot_page.url
+        case.extra_observations.append(f"landed on: {landed}")
+        if landed.rstrip("/") != SHARE_CALC_URL.rstrip("/"):
+            case.step(f"WARNING: landed URL differs from expected {SHARE_CALC_URL}")
+        shot_page.screenshot(path=f"{screenshot_prefix}_calculator.png", full_page=True)
+        case.shot(f"{screenshot_prefix}_calculator.png")
+        if shot_page is not page:
+            shot_page.close()
+        case.finish(ok=True)
+    except Exception as exc:  # noqa: BLE001
+        case.finish(ok=False, error=repr(exc))
+    finally:
+        page.close()
+    return case
+
+
+def drive_stock_case(context, mode: str, amount: str, case_id: str,
+                     screenshot_prefix: str) -> CaseResult:
+    """Drive the official share-transfer calculator (sdshare.htm) for one amount.
+
+    mode="sale":     'Transfer of share by way of sale or purchase'; the page
+                     shows Instrument of Transfer (IOT, fixed $5) and Bought
+                     and sold note (BNSN = ceil(0.1% x consideration) x 2).
+                     official_value = BNSN (the contract-note comparable);
+                     IOT is recorded in official_raw and observations.
+    mode="voluntary": 'Transfer of share by method other than sale or
+                     purchase'; the page shows oIOT = 5 + ceil(0.2% x value).
+    """
+    url = SHARE_CALC_URL
+    case = CaseResult(name=case_id, url=url, started_at=hkt_now())
+    page, dialogs = _new_page(context)
+    try:
+        case.step(f"goto {url} (calculator linked from the GovHK eTax share-transfer entry page)")
+        page.goto(url, wait_until="load", timeout=60_000)
+        if mode == "sale":
+            case.step(f"select 'Transfer of share by way of sale or purchase', fill Consideration = {amount}")
+            page.check("#sales")
+            page.fill("#salesValue", amount)
+        else:
+            case.step(
+                "select 'Transfer of share by method other than sale or purchase', "
+                f"fill Value of share = {amount}"
+            )
+            page.check("#others")
+            page.fill("#othersValue", amount)
+        page.screenshot(path=f"{screenshot_prefix}_input.png", full_page=True)
+        case.shot(f"{screenshot_prefix}_input.png")
+
+        case.step("click official Compute button (input[value=Compute], onclick=Compute())")
+        page.click('input[value="Compute"]')
+        page.wait_for_timeout(250)
+        if mode == "sale":
+            iot = page.input_value('input[name="IOT"]')
+            bnsn = page.input_value('input[name="BNSN"]')
+            case.official_raw = (
+                f"Instrument of Transfer input[name=IOT] displayed value: {iot}; "
+                f"Bought and sold note input[name=BNSN] displayed value: {bnsn}"
+            )
+            case.official_value = normalize_amount(bnsn)
+            case.extra_observations.append(
+                "official page-source formula (quoted verbatim from Compute()): "
+                "iotValue=5; bnsnValue=Math.ceil(0.0010*salesValue)*2 -> "
+                f"IOT={iot}, BNSN={bnsn}; official_value recorded = BNSN "
+                "(contract-note comparable; the IOT $5 is a separate document duty)"
+            )
+        else:
+            oiot = page.input_value('input[name="oIOT"]')
+            case.official_raw = (
+                "Current Stamp Duty Payable (Transfer by method other than sale or "
+                f"purchase) input[name=oIOT] displayed value: {oiot}"
+            )
+            case.official_value = normalize_amount(oiot)
+            case.extra_observations.append(
+                "official page-source formula (quoted verbatim from Compute()): "
+                "iotValue = 5 + Math.ceil(0.0020*othersValue) -> "
+                f"oIOT={oiot}"
+            )
+        page.screenshot(path=f"{screenshot_prefix}_result.png", full_page=True)
+        case.shot(f"{screenshot_prefix}_result.png")
+        if dialogs.messages:
+            case.extra_observations.append(f"page dialogs: {dialogs.messages!r}")
         case.finish(ok=bool(case.official_value))
     except Exception as exc:  # noqa: BLE001
         case.finish(ok=False, error=repr(exc))

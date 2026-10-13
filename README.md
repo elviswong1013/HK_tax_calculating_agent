@@ -55,6 +55,7 @@ playwright install chromium           # 仅 e2e 测试需要
 
 - 运行测试：`.venv\Scripts\python -m pytest tests/ -q`
 - 需求追溯检查：`.venv\Scripts\python scripts\check_req_traceability.py`
+- 持续集成：GitHub Actions（`.github/workflows/ci.yml`）在 push／PR 时以 Python 3.12、3.13 跑全量测试（含 Chromium e2e）；push 与手动触发时另跑 001 验证报告（门禁）＋002 官方计算器实时对比（尽力而为），并上传 `docs/validation/` 工件（报告＋截图）。
 - 数据库：运行时默认 `%LOCALAPPDATA%\hktax-agent\rules.db`（可用 `HKTAX_DB_PATH` 覆盖；仓库内无 DB）。
 - 规则更新节奏（与 `app/updater/scheduler` 实现一致）：
   - **首启即查**：首次启动（无成功记录）时调度器 `startup` 立即生成检查作业；逾期未查则启动时单次合并补查。

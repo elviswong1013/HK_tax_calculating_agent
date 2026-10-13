@@ -1,0 +1,87 @@
+# CI：push / pull_request 自动跑全量测试（Python 3.12、3.13；含 Chromium e2e）；
+# push 与手动触发时另跑 001 引擎 I/O 验证报告（门禁）＋002 官方计算器实时对比
+# （网络环境尽力而为），并上传 docs/validation/ 工件（报告＋截图）。
+name: CI
+
+# 引号仅为 YAML 1.1（pyyaml）解析安全；GitHub Actions 语义不变。
+"on":
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支/PR 的新运行取消旧运行。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 最小权限：仅需读取仓库内容（不发布、不回写）。
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: 全量测试（Python ${{ matrix.python-version }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 安装依赖（含 dev extras）
+        run: pip install -e ".[dev]"
+
+      - name: 安装 Chromium（e2e 需要）
+        run: python -m playwright install --with-deps chromium
+
+      - name: 全量测试（含 e2e）
+        run: python -m pytest -q
+
+  validation-reports:
+    name: 验证报告（001 门禁＋002 尽力而为）
+    needs: tests
+    # 仅 push 与手动触发（PR 只跑测试，不跑报告）。
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖（含 dev extras）
+        run: pip install -e ".[dev]"
+
+      - name: 安装 Chromium（002 实时驱动官方页面需要）
+        run: python -m playwright install --with-deps chromium
+
+      - name: 生成 001 引擎 I/O 验证报告（门禁：任一不一致即失败）
+        run: python scripts/generate_validation_report.py
+
+      - name: 实时驱动官方计算器生成 002（尽力而为，失败不阻断）
+        continue-on-error: true
+        run: python -m scripts.official_calc_compare.run_all
+
+      - name: 上传 docs/validation/ 工件（报告＋截图；002 未产出时至少含 001）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-reports-py3.12
+          path: docs/validation/
+          if-no-files-found: error
