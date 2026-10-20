@@ -40,54 +40,8 @@ DATA: dict = {
         {"width": "5000000", "rate_bp": 1500},
         {"rate_bp": 1600},
     ],
-    # 附表 3B（T1）：MPF 强制性供款扣除上限（每人；合并评税两人各自封顶）。
-    "mpf_deduction_cap": "18000",
-    # 附表 4（T1）：免税额矩阵，按课税年度；年度键存在＝该年度可算。
-    # 受养父母行（s.30/30A）：aged_60_or_above／aged_55_to_59 按年度末年龄
-    # 分档；全年连续同住额外同额（s.30(3)(b)/(3A)(b)）由引擎按同额计入。
-    "allowances": {
-        "2024_25": {
-            "basic": "132000",
-            "married": "264000",
-            "child": "130000",
-            "child_birth_year_additional": "130000",
-            "child_aggregate_cap": "1170000",
-            "parent_aged_60_or_above": "50000",
-            "parent_aged_55_to_59": "25000",
-        },
-        "2025_26": {
-            "basic": "132000",
-            "married": "264000",
-            "child": "130000",
-            "child_birth_year_additional": "130000",
-            "child_aggregate_cap": "1170000",
-            "parent_aged_60_or_above": "50000",
-            "parent_aged_55_to_59": "25000",
-        },
-        # s.31(1B) 出生次年额外（2 of 2026 s.3）自 2026/27 生效：仅本行有键。
-        "2026_27": {
-            "basic": "145000",
-            "married": "290000",
-            "child": "140000",
-            "child_birth_year_additional": "140000",
-            "child_following_year_additional": "140000",
-            "child_aggregate_cap": "1260000",
-            "parent_aged_60_or_above": "55000",
-            "parent_aged_55_to_59": "27500",
-        },
-    },
-    # 附表 4 受养父母/祖父母行（T1；s.30/30A）：按课税年度末年龄分档；
-    # 全年连续同住额外同额（s.30(3)(b)/(3A)(b)）由引擎按同额计入。
-    "parent_allowances": {
-        "2024_25": {"aged_60_or_above": "50000", "aged_55_to_59": "25000"},
-        "2025_26": {"aged_60_or_above": "50000", "aged_55_to_59": "25000"},
-        "2026_27": {"aged_60_or_above": "55000", "aged_55_to_59": "27500"},
-    },
-    # 附表 43（T1）：按课税年度条目；缺项＝该年度无宽减（2026/27）。
-    "reductions": {
-        "2024_25": {"percent_bp": 10000, "cap": "1500"},
-        "2025_26": {"percent_bp": 10000, "cap": "3000"},
-    },
+    # A8（005 §15.2）：salary 税区私有 allowances/reductions/MPF 副本已退役；
+    # 唯一来源为顶层 data.allowances / data.reductions（共享矩阵）。
     # 附表 3C（T1）：在册扣除逐项枚举（无 catch-all；SDD §3／REQ-10）。
     # cap 为每人每年度法定上限；缺项年度＝该年度无此扣除（fail-closed）。
     "deductions": {

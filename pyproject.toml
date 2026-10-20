@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hktax-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "HK tax calculation agent (local, deterministic)"
 requires-python = ">=3.12,<3.14"
 # Production 运行时依赖（Green 阶段加入；Gate2＋用户授权 2026-10-08）。

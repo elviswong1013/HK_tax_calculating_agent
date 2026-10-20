@@ -2,8 +2,8 @@
 
 验收缺口（@acceptor 第二轮 P0-2）：/profits、/property、/stamps/lease 仍只是
 说明页；须实现各税项输入、补问、确认、计算与结果展示，并补充浏览器端实际
-计算测试。本文件为该缺口的 Red 测试（pytest.mark.e2e；Chromium；与
-tests/e2e/test_ui_browser.py 同启动/服务夹具风格）——当前各页无表单控件、
+计算测试。本文件为该缺口的 Red 测试（pytest.mark.e2e；Chromium；共享启动/隔离见
+tests/e2e/conftest.py 的 `e2e_isolation`，006 §6 ①–⑤）——当前各页无表单控件、
 无「确认资料并计算」按钮/确认对话框，全部测试应因「控件/流程不存在」失败
 （Red 失败原因＝缺口本身，不得以环境/导入错误失败）。
 
@@ -50,83 +50,17 @@ REQ: REQ-12（Annex A §4/§6/§9/§12.2：表单控件、确认对话框、结�
 
 from __future__ import annotations
 
-import os
 import re
-import socket
-import threading
-import time
 
 import pytest
 
 pytestmark = [pytest.mark.e2e]
 
 
-def _free_port() -> int:
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
-
-
-@pytest.fixture(scope="module")
-def base_url(tmp_path_factory):
-    """受控回环启动被测应用（真实 uvicorn；单 worker；临时 DB）。
-
-    同 tests/e2e/test_ui_browser.py 的服务夹具（本目录无 conftest，文件自含）。
-    """
-    import uvicorn
-
-    db_dir = tmp_path_factory.mktemp("e2e-forms")
-    old = os.environ.get("HKTAX_DB_PATH")
-    os.environ["HKTAX_DB_PATH"] = str(db_dir / "rules.db")
-    try:
-        from app.main import create_app  # 延迟导入：失败原因=缺失 app 行为
-
-        app = create_app()
-    finally:
-        if old is None:
-            os.environ.pop("HKTAX_DB_PATH", None)
-        else:
-            os.environ["HKTAX_DB_PATH"] = old
-
-    port = _free_port()
-    config = uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_level="warning", workers=1
-    )
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline and not server.started:
-        time.sleep(0.05)
-    assert server.started, "e2e 服务器未能在 15s 内启动（127.0.0.1 受控回环）"
-    yield f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    thread.join(timeout=10)
-
-
 @pytest.fixture
-def page(base_url):
-    """Chromium 页面；浏览器缺失时整文件 SKIP（安装留给 Green 阶段）。
-
-    动作/expect 超时 8s：本文件流程含真实 API 往返（prepare→confirm→
-    execute），略宽于 test_ui_browser.py 的 3s；Red 阶段仍快速失败。
-    """
-    from playwright.sync_api import expect, sync_playwright
-
-    expect.set_options(timeout=8000)
-    with sync_playwright() as pw:
-        try:
-            browser = pw.chromium.launch()
-        except Exception as exc:  # noqa: BLE001 —— 缺浏览器二进制＝环境未就绪
-            pytest.skip(f"需要 Chromium（Green 阶段运行 playwright install chromium）：{exc}")
-        context = browser.new_context()
-        context.set_default_timeout(8000)
-        pg = context.new_page()
-        yield pg
-        context.close()
-        browser.close()
+def e2e_expect_timeout() -> int:
+    """本文件流程含真实 API 往返（prepare→confirm→execute），超时 8s。"""
+    return 8000
 
 
 # ------------------------------------------------------------------ 表单填写

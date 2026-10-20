@@ -32,6 +32,33 @@ from app.core.money import parse_amount
 _STATUS_CANDIDATE = "candidate"
 _STATUS_QUARANTINED = "quarantined"
 
+# 005 §15.3/§15.5：六条旧 salary/PA 路径本期固定 stop-auto（仅观察）。
+# 即使来源 manifest 被注入旧 slot，也不得进入自动写路径（不能仅靠 UI 隐藏）。
+STOP_AUTO_PATHS: frozenset[str] = frozenset(
+    {
+        "salaries.allowances.2025_26.basic",
+        "salaries.allowances.2025_26.married",
+        "salaries.allowances.2026_27.basic",
+        "salaries.mpf_deduction_cap",
+        "salaries.reductions.2024_25.cap",
+        "salaries.reductions.2025_26.cap",
+    }
+)
+
+# 005:855：新共享矩阵路径及等价前缀同样不得成为自动写入后门（即使注入合法
+# decimal slot）。注意与 STOP_AUTO_PATHS 分开，保护既有“恰六条旧路径”断言。
+SHARED_RULE_PREFIXES: tuple[str, ...] = (
+    "allowances.",
+    "reductions.",
+    "data.allowances.",
+    "data.reductions.",
+)
+
+
+def is_stop_auto_path(fullpath: object) -> bool:
+    path = str(fullpath or "")
+    return path in STOP_AUTO_PATHS or path.startswith(SHARED_RULE_PREFIXES)
+
 
 def _top_segment(fullpath: str) -> str:
     return fullpath.split(".", 1)[0]
@@ -97,6 +124,25 @@ def build_candidate(
     for manifest in manifests:
         for slot in manifest.get("slots", []) or []:
             slot_by_path[slot["fullpath"]] = slot
+
+    stop_auto = [
+        change for change in changes if is_stop_auto_path(change.get("fullpath"))
+    ]
+    if stop_auto:
+        paths = [str(change.get("fullpath")) for change in stop_auto]
+        return {
+            "status": _STATUS_QUARANTINED,
+            "content": None,
+            "quarantine_reason": "stop_auto_observer_only",
+            "change_request": {
+                "paths": paths,
+                "profiles": _profiles_for_paths(paths, manifests),
+                "reason": (
+                    "六条旧 salary/PA 路径本期 stop-auto（仅观察、不得自动写；"
+                    "005 §15.3/§15.5）：不得生成可发布候选。"
+                ),
+            },
+        }
 
     rejected = [change for change in changes if change.get("fullpath") not in slot_by_path]
     if rejected:

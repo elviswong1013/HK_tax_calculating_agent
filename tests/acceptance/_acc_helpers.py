@@ -1,33 +1,29 @@
-"""验收缺口 Red 测试共享基建（终验 REJECTED 后 Red 阶段；本目录自包含，不跨目录导入）。
+"""Acceptance shared helpers (P3-W1a Red; ASCII-safe rebuild).
 
-内容：
-- 回环 CSRF-aware API 封装（契约同 tests/conftest.Api：安全 GET 发放
-  X-CSRF-Token，不安全方法回呈＋Origin 与 Host 完全一致，C5.2/C5.3）。
-- 进程内 app 工厂把手（app.state.store／app.state.update_scheduler 服务端
-  接缝，同 tests/ui/_helpers.py 注入模式）。
-- 六个已批准税项的最小合法事实集（字段名＝Annex C C3.5＋Annex D D 系列事实
-  模型；构造与 tests/engines/* 既绿测试同形——本模块独立可运行，避免与
-  tests/ui/_helpers.py 等既有下划线模块名冲突，故名 _acc_helpers）。
-- prepare→confirm→execute 三段驱动（C3.2）。
-- 更新调度假件（FakeClock/FakeOutbound）＋预算来源 manifest/文档（驱动
-  SOURCE 状态 enter，C7.9；与 tests/updater/_fakes.py 同形测试宇宙）。
-- 发布/门禁本地宇宙（通过报告/独立事实/严格出站/候选内容差）。
-
-期望值来源: 全部为结构/状态契约；无金额数值期望。
+Contract:
+- Loopback CSRF-aware API wrapper (same shape as tests/conftest.Api).
+- In-process app factory handle (app.state.store / app.state.update_scheduler).
+- Minimal legal facts for the six approved tax types.
+- prepare -> confirm -> execute driver.
+- Updater fakes + budget manifest/document universe.
+- Publish/gate local universe (report/independent fact/strict outbound/candidate).
+- P3-W1a additions: stop-auto observer descriptors, unaffected AVD path,
+  test-only second independent source, B5 required case, update report binding.
+No amount expectations.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import html as _html
 import httpx
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 _html_escape = _html.escape
 
 BASE_ORIGIN = "http://127.0.0.1:8000"
-
-# Asia/Hong_Kong＝固定 +08:00（同 tests/updater/_fakes 约定）
 HK = timezone(timedelta(hours=8))
 
 
@@ -35,11 +31,8 @@ def hk(year: int, month: int, day: int, hour: int = 9, minute: int = 0) -> datet
     return datetime(year, month, day, hour, minute, tzinfo=HK)
 
 
-# ---------------------------------------------------------------------------
-# 回环 API 封装（CSRF/Origin；C5.2/C5.3）
-# ---------------------------------------------------------------------------
 class AccApi:
-    """在合法回环 Host/Origin 下带 CSRF 能力访问 API 的薄封装。"""
+    """CSRF-aware loopback API wrapper."""
 
     def __init__(self, client: httpx.Client) -> None:
         self._client = client
@@ -50,7 +43,7 @@ class AccApi:
             r = self._client.get("/")
             r.raise_for_status()
             token = r.headers.get("X-CSRF-Token")
-            assert token, "安全 GET 未发放 X-CSRF-Token（C5.2/C5.3）"
+            assert token, "safe GET missing X-CSRF-Token (C5.2/C5.3)"
             self._csrf_token = token
         return self._csrf_token
 
@@ -65,8 +58,6 @@ class AccApi:
 
 
 class AccHarness:
-    """app 把手＋回环 API 封装（进程内；服务端接缝注入用）。"""
-
     def __init__(self, app, api: AccApi) -> None:
         self.app = app
         self.api = api
@@ -80,10 +71,8 @@ class AccHarness:
 
 
 def build_app(setenv, db_path) -> AccHarness:
-    """构建进程内应用把手；setenv＝conftest 注入的 monkeypatch.setenv
-    （HKTAX_DB_PATH 每应用唯一临时路径，测试结束自动复原）。"""
     setenv("HKTAX_DB_PATH", str(db_path))
-    from app.main import create_app  # 延迟导入（同 tests/conftest 约定）
+    from app.main import create_app
 
     app = create_app()
     client = httpx.Client(
@@ -92,9 +81,6 @@ def build_app(setenv, db_path) -> AccHarness:
     return AccHarness(app, AccApi(client))
 
 
-# ---------------------------------------------------------------------------
-# 六个已批准税项：最小合法事实集＋执行目标（Annex C C3.1/C3.5）
-# ---------------------------------------------------------------------------
 TAX_EXECUTE_TARGETS: dict[str, str] = {
     "salaries_tax": "/api/v1/calc/salaries-tax",
     "profits_tax": "/api/v1/calc/profits-tax",
@@ -107,7 +93,6 @@ TAX_EXECUTE_TARGETS: dict[str, str] = {
 
 
 def _paid_rates_zero() -> dict:
-    """差饷两条件显式为零（s.5(1A)：amount "0"＋同意且已缴均真）。"""
     return {
         "amount": "0",
         "agreed": {"value": True},
@@ -116,7 +101,6 @@ def _paid_rates_zero() -> dict:
 
 
 def salaries_min_facts(*, year: str = "2025_26", with_provisional_zero: bool = False) -> dict:
-    """单身受雇人士最小事实集（PAM39 Q1 载荷事实，仅作输入不作税额期望）。"""
     facts: dict = {
         "year_of_assessment": year,
         "employment_income": "240000",
@@ -129,7 +113,6 @@ def salaries_min_facts(*, year: str = "2025_26", with_provisional_zero: bool = F
 
 
 def profits_min_facts() -> dict:
-    """独资非法团最小事实集（两级制资格三项全部显式确认）。"""
     return {
         "year_of_assessment": "2025_26",
         "entity_kind": "sole_proprietorship",
@@ -143,7 +126,6 @@ def profits_min_facts() -> dict:
 
 
 def property_min_facts() -> dict:
-    """单一物业最小事实集（pty.htm Q7 载荷事实：租金 120,000、差饷 0）。"""
     return {
         "year_of_assessment": "2025_26",
         "properties": [
@@ -159,46 +141,84 @@ def property_min_facts() -> dict:
 
 
 def personal_assessment_min_facts() -> dict:
-    """Q32 载荷事实（已婚两人：本人薪金＋配偶物业；整体结构保留）。"""
     return {
         "year_of_assessment": "2025_26",
-        "married_status": {"value": "married"},
-        "persons": [
-            {
-                "person_id": "self",
-                "employment_income": "250000",
-                "mpf_mandatory_contributions": "0",
-                "properties": [],
-                "businesses": [],
-                "dependent_parents": [],
-                "dependent_children": [],
-            },
-            {
-                "person_id": "spouse",
-                "employment_income": "0",
-                "mpf_mandatory_contributions": "0",
-                "properties": [
-                    {
-                        "property_id": "p-1",
-                        "share": "1/1",
-                        "rent_received": "240000",
-                        "rates_paid_by_owner": _paid_rates_zero(),
-                        "irrecoverable_rent": "0",
-                        "deposit_offsets": "0",
-                        "mortgage_interest": "0",
+        "subjects": [{"subject_id": "p1", "birth_date": "1990-01-01"}],
+        "years": {
+            "2025_26": {
+                "participants": [{"person_id": "p1", "role": "self"}],
+                "subject_facts": {
+                    "p1": {
+                        "ordinarily_resident_hk": [
+                            {"from": "2026-06-01", "to": "2026-06-02", "value": True}
+                        ]
                     }
-                ],
-                "businesses": [],
-                "dependent_parents": [],
-                "dependent_children": [],
-            },
-        ],
-        "provisional_paid": "0",
+                },
+                "household": {
+                    "marriage": [
+                        {"from": "2025-04-01", "to": "2026-04-01", "value": "unmarried"},
+                        {"from": "2026-06-01", "to": "2026-06-02", "value": "unmarried"},
+                    ],
+                    "living_apart": [],
+                    "child_nomination": {"person_id": None, "status": "none"},
+                },
+                "relations": [],
+                "financials": {
+                    "p1": {
+                        "employment_income_nai": "250000",
+                        "mpf_mandatory_contributions": "0",
+                        "has_assessable_salary_income": True,
+                        "has_assessable_property_income": True,
+                        "has_assessable_business_income": False,
+                        "has_income_assessable_under_ordinance": True,
+                        "source_classification": {
+                            "salary": "confirmed_in_scope",
+                            "property": "confirmed_in_scope",
+                            "business": "confirmed_in_scope",
+                        },
+                        "properties": [
+                            {
+                                "property_id": "h1",
+                                "share": "1/1",
+                                "rent_received": "120000",
+                                "rates_paid_by_owner": {
+                                    "amount": "0",
+                                    "agreed": False,
+                                    "actually_paid": False,
+                                },
+                                "irrecoverable_rent": "0",
+                                "deposit_offsets": "0",
+                                "mortgage_interest": "0",
+                            }
+                        ],
+                        "businesses": [],
+                        "deduction_items": [],
+                    }
+                },
+                "care_payments": [],
+                "claims": [],
+                "assessment": {
+                    "reference_date": "2026-06-01",
+                    "basis": "hypothetical",
+                    "actual": {
+                        "salary_joint_elected": False,
+                        "salary_joint_assessed": False,
+                        "pa": {"p1": {"mode": "none"}},
+                        "history": "ordinary",
+                    },
+                    "candidates": ["no_pa", "pa_self"],
+                    "selection": "best",
+                },
+                "manual_issues": [],
+                "provisional_paid": "0",
+            }
+        },
+        "hk_presence_days": [],
+        "assumptions": [],
     }
 
 
 def stamp_property_min_facts() -> dict:
-    """住宅 AVD 普通买卖协议（Table 9 窗口内 600 万）最小事实集。"""
     return {
         "instrument_date": "2025-06-20",
         "instrument_kind": "agreement_for_sale",
@@ -209,7 +229,6 @@ def stamp_property_min_facts() -> dict:
 
 
 def stamp_stock_min_facts() -> dict:
-    """股票普通买卖 contract note（sold 一份）最小事实集。"""
     return {
         "instrument_date": "2025-06-10",
         "complete": {"value": True},
@@ -224,7 +243,6 @@ def stamp_stock_min_facts() -> dict:
 
 
 def stamp_lease_min_facts() -> dict:
-    """两年固定租约（月租 10,000、premium 显式 "0"）最小事实集。"""
     return {
         "instrument_date": "2025-06-20",
         "term_kind": "fixed",
@@ -249,17 +267,154 @@ def minimal_facts(tax_type: str) -> dict:
     return builders[tax_type]()
 
 
-# ---------------------------------------------------------------------------
-# prepare→confirm→execute 三段驱动（C3.2）
-# ---------------------------------------------------------------------------
 PREPARE_PATH = "/api/v1/calc/prepare"
 CONFIRM_PATH = "/api/v1/calc/confirm"
 
 
+def fresh_if_match(api) -> dict[str, str]:
+    r = api.get("/api/v1/meta/version")
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    assert "session_epoch" in payload and "input_revision" in payload, (
+        f"S002 4.1: meta/version missing session_epoch/input_revision: {payload!r}"
+    )
+    return {
+        "If-Match": (
+            f'"edit-{int(payload["session_epoch"])}-{int(payload["input_revision"])}"'
+        )
+    }
+
+
+def _tf(year: str, value: object) -> list[dict]:
+    start = int(year[:4])
+    return [{"from": f"{start}-04-01", "to": f"{start + 1}-04-01", "value": value}]
+
+
+def _v2_year_block(year: str, finance: dict, marriage_value: str = "unmarried") -> dict:
+    start = int(year[:4])
+    return {
+        "participants": [{"person_id": "p1", "role": "self"}],
+        "subject_facts": {},
+        "household": {
+            "marriage": [
+                {
+                    "from": f"{start}-04-01",
+                    "to": f"{start + 1}-04-01",
+                    "value": marriage_value,
+                }
+            ],
+            "living_apart": [],
+            "child_nomination": {"person_id": None, "status": "none"},
+        },
+        "relations": [],
+        "care_payments": [],
+        "claims": [],
+        "financials": {"p1": copy.deepcopy(finance)},
+        "assessment": {
+            "basis": "actual",
+            "candidates": ["salary_separate"],
+            "selection": "salary_separate",
+        },
+        "manual_issues": [],
+    }
+
+
+def _salary_v2_input(facts: dict) -> dict:
+    year = facts["year_of_assessment"]
+    start = int(year[:4])
+    finance = {
+        "has_assessable_salary_income": True,
+        "source_classification": {"salary": "confirmed_in_scope"},
+        "properties": [],
+        "businesses": [],
+        "deduction_items": [],
+    }
+    for key in ("employment_income", "mpf_mandatory_contributions"):
+        if key in facts:
+            target = "employment_income_nai" if key == "employment_income" else key
+            finance[target] = facts[key]
+    if "deduction_items" in facts:
+        finance["deduction_items"] = copy.deepcopy(facts["deduction_items"])
+    status = facts["married_status"]["value"]
+    marriage_value = "unmarried" if status == "single" else status
+    year_block = _v2_year_block(year, finance, marriage_value)
+    subjects = [{"subject_id": "p1", "birth_date": "1990-01-01"}]
+    claim_seq = 0
+    for index, parent in enumerate(facts.get("dependent_parents") or [], 1):
+        pid = f"d{index}"
+        subjects.append({"subject_id": pid, "birth_date": parent.get("birth_date")})
+        subject_facts: dict = {"govt_disability_allowance": _tf(year, False)}
+        residence = (parent.get("residence") or {}).get("value")
+        if residence is not None:
+            subject_facts["ordinarily_resident_hk"] = _tf(year, residence)
+        year_block["subject_facts"][pid] = subject_facts
+        relation = {
+            "relation_id": f"r{index}",
+            "actor_id": "p1",
+            "subject_id": pid,
+            "kinship": {"kind": "parent", "basis": "birth", "during": _tf(year, True)},
+        }
+        maintained_present = "maintained" in parent
+        maintained = (parent.get("maintained") or {}).get("value")
+        if maintained_present:
+            relation["cash_maintenance"] = "15000" if maintained is True else "0"
+        together_present = "living_together_all_year" in parent
+        together = (parent.get("living_together_all_year") or {}).get("value")
+        if maintained_present and together_present:
+            relation["cohabit_non_full_consideration"] = _tf(year, together)
+        year_block["relations"].append(relation)
+        claim_seq += 1
+        year_block["claims"].append(
+            {
+                "claim_id": f"c{claim_seq}",
+                "kind": "parent",
+                "claimant_id": "p1",
+                "subject_id": pid,
+            }
+        )
+        if together_present:
+            claim_seq += 1
+            year_block["claims"].append(
+                {
+                    "claim_id": f"c{claim_seq}",
+                    "kind": "parent_cohabitation_additional",
+                    "claimant_id": "p1",
+                    "subject_id": pid,
+                }
+            )
+    years = {year: year_block}
+    if "provisional_paid" in facts:
+        year_block["provisional_paid"] = facts["provisional_paid"]
+        following = f"{start + 1}_{(start + 2) % 100:02d}"
+        if following in ("2024_25", "2025_26", "2026_27"):
+            years[following] = _v2_year_block(following, finance, marriage_value)
+    return {
+        "year_of_assessment": year,
+        "subjects": subjects,
+        "years": years,
+        "hk_presence_days": [],
+        "assumptions": [],
+    }
+
+
 def prepare(api, tax_type: str, facts: dict):
+    if tax_type == "salaries_tax" and "years" not in facts:
+        input_facts = _salary_v2_input(facts)
+        schema_version = "2.0.0"
+    elif tax_type in ("salaries_tax", "personal_assessment"):
+        input_facts = facts
+        schema_version = "2.0.0"
+    else:
+        input_facts = facts
+        schema_version = "1.0.0"
     return api.post(
         PREPARE_PATH,
-        json={"tax_type": tax_type, "schema_version": "1.0.0", "input": facts},
+        json={
+            "tax_type": tax_type,
+            "schema_version": schema_version,
+            "input": input_facts,
+        },
+        headers=fresh_if_match(api),
     )
 
 
@@ -280,7 +435,6 @@ def execute(api, confirmation_id: str, target: str):
 
 
 def error_code(response) -> str | None:
-    """统一错误形状 §4 的 error.code（缺失 → None）。"""
     try:
         err = response.json().get("error")
     except Exception:
@@ -288,9 +442,6 @@ def error_code(response) -> str | None:
     return err.get("code") if isinstance(err, dict) else None
 
 
-# ---------------------------------------------------------------------------
-# 更新调度假件（C6.4 时钟／出站；与 tests/updater/_fakes 同形）
-# ---------------------------------------------------------------------------
 class FakeClock:
     def __init__(self, start: datetime) -> None:
         self._now = start.astimezone(HK)
@@ -301,11 +452,11 @@ class FakeClock:
     def set(self, moment: datetime) -> None:
         self._now = moment.astimezone(HK)
 
+    def advance(self, *, days: int = 0, minutes: int = 0) -> None:
+        self._now = self._now + timedelta(days=days, minutes=minutes)
+
 
 class FakeOutbound:
-    """进程内假出站：fetch(url) -> bytes；unreachable/未知 URL → ConnectionError；
-    requests 记录全部调用（隔离断言用）。"""
-
     def __init__(self, documents: dict | None = None) -> None:
         self.documents: dict = dict(documents or {})
         self.requests: list[dict] = []
@@ -314,45 +465,42 @@ class FakeOutbound:
     def fetch(self, url: str, **kwargs) -> bytes:
         self.requests.append({"url": url, "kwargs": kwargs})
         if self.unreachable or url not in self.documents:
-            raise ConnectionError(f"网络不可达（假出站）：{url}")
+            raise ConnectionError(f"unreachable (fake outbound): {url}")
         return self.documents[url]
 
 
 class StrictOutbound(FakeOutbound):
-    """门禁隔离假出站：任何出站尝试即 AssertionError（C8.7 无网络）。"""
-
     def fetch(self, url: str, **kwargs) -> bytes:
         self.requests.append({"url": url, "kwargs": kwargs})
-        raise AssertionError(f"门禁运行环境不得访问网络（C8.7）：{url}")
+        raise AssertionError(f"gate environment must not access network (C8.7): {url}")
 
 
 class FakeHarness:
-    """独立参考 harness 假件（C8.1 seam）。"""
-
     def __init__(self, results: dict[str, dict]) -> None:
         self.results = dict(results)
+        self.calls: list[str] = []
 
-    def run_case(self, case_id: str) -> dict:
+    def run_case(self, case_id: str, **kwargs) -> dict:
+        self.calls.append(case_id)
         if case_id not in self.results:
-            raise KeyError(f"未知必需 case：{case_id}")
+            raise KeyError(f"unknown required case: {case_id}")
         return self.results[case_id]
 
 
 class FakeEngine:
-    """候选引擎假件（与 harness 输出一致的对照用）。"""
-
     def __init__(self, results: dict[str, dict]) -> None:
         self.results = dict(results)
+        self.calls: list[str] = []
 
-    def run_case(self, case_id: str, candidate_content: dict) -> dict:
+    def run_case(self, case_id: str, candidate_content: dict, **kwargs) -> dict:
+        self.calls.append(case_id)
         if case_id not in self.results:
-            raise KeyError(f"未知必需 case：{case_id}")
+            raise KeyError(f"unknown required case: {case_id}")
         return self.results[case_id]
 
 
 BUDGET_URL = "https://www.ird.gov.hk/eng/tax/budget.htm"
 
-# 预算页 manifest（C7.2 封闭键集合；结构同 tests/updater/_fakes 同形宇宙）
 BUDGET_MANIFEST: dict = {
     "manifest_schema_version": "1",
     "source_id": "ird_budget",
@@ -401,11 +549,10 @@ BUDGET_MANIFEST: dict = {
             "period": "2024_25",
         },
     ],
-    "proof_authority": "ird.gov.hk 官方页面原文（heading＋行/列标锚定）",
-    "independent_counterpart": "iro_sch43 法例附表文本（独立对应来源）",
+    "proof_authority": "ird.gov.hk official page",
+    "independent_counterpart": "iro_sch43 schedule text",
 }
 
-# 值表与现行 bundle 一致（无变更）＋无状态通知
 BUDGET_DOC_OK = (
     b"<html><body>"
     b"<h2>Salaries Tax Reduction</h2>"
@@ -416,7 +563,6 @@ BUDGET_DOC_OK = (
     b"</body></html>"
 )
 
-# 值表不变＋锚定通知「repealed」→ legal_state_rules 判 expired（2024_25）
 BUDGET_DOC_EXPIRED_NOTICE = (
     b"<html><body>"
     b"<h2>Salaries Tax Reduction</h2>"
@@ -431,7 +577,6 @@ BUDGET_DOC_EXPIRED_NOTICE = (
 
 
 def budget_source() -> dict:
-    """单源 allowlist（预算页；驱动 SOURCE 状态 enter 用）。"""
     return {
         "source_id": "ird_budget",
         "url": BUDGET_URL,
@@ -450,9 +595,6 @@ def make_scheduler(store, *, clock, outbound, sources=None):
     )
 
 
-# ---------------------------------------------------------------------------
-# 发布/门禁本地宇宙（REQ-18；结构同 tests/updater 既有口径）
-# ---------------------------------------------------------------------------
 REPORT_PUBLISH_OK = {
     "decision": "publish",
     "tests": {"passed": 3, "failed": 0, "failed_ids": []},
@@ -471,6 +613,438 @@ FACT_CAP_3500 = {
     "tier": "T1",
 }
 
+AVD_FULLPATH = "stamps.property.related_conveyance.fixed_duty"
+AVD_BASELINE = "100"
+AVD_CHANGED = "110"
+AVD_SECOND_URL = "https://www.elegislation.gov.hk/hk/cap117!s29D"
+AVD_SECOND_SOURCE_ID = "testonly_cap117_avd"
+# 生产 B5_CASES 的 AVD case id（测试仅注入 required_cases，不扩生产集合）。
+B5_REQUIRED_CASE = "a_avd_related_fixed"
+# 与 Scheduler._classify_round 的 fact_id 形式一致，使门禁按精确 fact_id 绑定
+# 独立第二来源证据（不依赖 required-map 同值 fallback）。
+B5_PROOF_FACT_ID = f"fact:{AVD_SECOND_SOURCE_ID}:{AVD_FULLPATH}"
+
+FACT_AVD_110 = {
+    "fact_id": "fact_002_cap117_avd_110",
+    "fullpath": AVD_FULLPATH,
+    "value": AVD_CHANGED,
+    "source_id": AVD_SECOND_SOURCE_ID,
+    "url": AVD_SECOND_URL,
+    "anchor": "heading:Cap 117 s.29D - Related Conveyance#row:Fixed duty#col:Amount",
+    "tier": "T1",
+}
+
+STOP_AUTO_TARGETS: dict[str, str] = {
+    "salaries.allowances.2025_26.basic": "allowances.2025_26.basic.amount",
+    "salaries.allowances.2025_26.married": "allowances.2025_26.married.amount",
+    "salaries.allowances.2026_27.basic": "allowances.2026_27.basic.amount",
+    "salaries.mpf_deduction_cap": "allowances.mpf_deduction_cap",
+    "salaries.reductions.2024_25.cap": "reductions.2024_25.cap",
+    "salaries.reductions.2025_26.cap": "reductions.2025_26.cap",
+}
+
+
+def _testonly_avd_source() -> dict:
+    slot = {
+        "profile_ID": "avd_related_conveyance_v1",
+        "fullpath": AVD_FULLPATH,
+        "type": "decimal_string",
+        "unit": "HKD",
+        "constraints": {"min": "0", "max": "10000", "step": "1"},
+        "anchor": "heading:Cap 117 s.29D - Related Conveyance#row:Fixed duty#col:Amount",
+        "proof_role": "independent_counterpart",
+    }
+    return {
+        "source_id": AVD_SECOND_SOURCE_ID,
+        "url": AVD_SECOND_URL,
+        "manifest": {
+            "manifest_schema_version": "1",
+            "source_id": AVD_SECOND_SOURCE_ID,
+            "url": AVD_SECOND_URL,
+            "artifact_type": "html_table",
+            "parser_id": "testonly_cap117_table_v1",
+            "parser_code_hash": "sha256:" + "ee" * 32,
+            "anchors": [
+                {
+                    "path_regex": "heading:Cap 117 s.29D - Related Conveyance",
+                    "anchor_status": "confirmed",
+                },
+                {"path_regex": slot["anchor"], "anchor_status": "confirmed"},
+            ],
+            "fields": [AVD_FULLPATH],
+            "slots": [slot],
+            "evidence_only_fields": [],
+            "legal_state_rules": [],
+            "proof_authority": "elegislation.gov.hk Cap.117 s.29D (test-only)",
+            "independent_counterpart": "ird_avd official FAQ",
+        },
+    }
+
+
+def b5_proof_fact() -> dict:
+    """独立第二来源的 B5 参数证据（value 来自 FACT_AVD_110，不硬编码 110）。"""
+    fact = copy.deepcopy(FACT_AVD_110)
+    fact["fact_id"] = B5_PROOF_FACT_ID
+    return fact
+
+
+def b5_harness():
+    """生产 B5 reference harness：proof-controlled 期望（不返回常量 fake）。
+
+    proof_facts 绑定独立第二来源事实；harness 必须走生产 B5_CASES 执行分支，
+    从 proof 值构造期望，而不是把 110 写死在测试 helper。
+    """
+    from app.updater.reference import ReferenceHarness
+
+    return ReferenceHarness(proof_facts=[b5_proof_fact()])
+
+
+def b5_engine():
+    """生产候选引擎：必须执行真实 B5_CASES 分支并读取原样 candidate data。"""
+    from app.updater.reference import CandidateEngine
+
+    return CandidateEngine()
+
+
+def _canonical_sha(payload) -> str:
+    from app.core.hashing import canonical_json_bytes
+
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+
+
+def _reference_code_sha256() -> str:
+    """运行时读取当前 reference.py 文件字节（不得硬编码/不得 canonical label）。"""
+    from app.updater import reference
+
+    return "sha256:" + hashlib.sha256(
+        Path(reference.__file__).read_bytes()
+    ).hexdigest()
+
+
+def _profile_bindings(content: dict) -> list[dict]:
+    """Profile rows; legacy profiles use canonical-JSON SHA-256 (shared P keeps
+    its stored semantic_digest)."""
+    rows: list[dict] = []
+    for profile in content["frozen_semantics"]["profiles"]:
+        digest = profile.get("semantic_digest") or _canonical_sha(profile)
+        rows.append(
+            {
+                "profile_id": str(profile["profile_id"]),
+                "semantic_digest": str(digest),
+            }
+        )
+    return rows
+
+
+def _fixture_plan_subcases(plan: dict) -> tuple[list[dict], list[dict]]:
+    """Plan-aligned expected/actual subcase payloads for synthetic reports."""
+    expected: list[dict] = []
+    actual: list[dict] = []
+    for subcase in plan.get("subcases") or []:
+        entry = {
+            "subcase_id": str(subcase["subcase_id"]),
+            "input": copy.deepcopy(dict(subcase["input"])),
+            "expected": copy.deepcopy(dict(subcase["expected"])),
+        }
+        expected.append(entry)
+        actual.append(
+            {
+                **copy.deepcopy(entry),
+                "actual": copy.deepcopy(dict(subcase["expected"])),
+                "passed": True,
+                "receipt": {
+                    "subcase_id": str(subcase["subcase_id"]),
+                    "engine": "test:fake-b5",
+                    "input_sha256": _canonical_sha(dict(subcase["input"])),
+                },
+            }
+        )
+    return expected, actual
+
+
+def _subcase_proof_fields(
+    expected_entries,
+    actual_entries,
+    subcase_ids,
+) -> dict:
+    """Canonical subcase proof fields (same shape as _repair1_helpers)."""
+    expected = [
+        {
+            "subcase_id": str(entry["subcase_id"]),
+            "input": copy.deepcopy(dict(entry["input"])),
+            "expected": copy.deepcopy(dict(entry["expected"])),
+        }
+        for entry in expected_entries
+    ]
+    actual = [
+        {
+            "subcase_id": str(entry["subcase_id"]),
+            "input": copy.deepcopy(dict(entry["input"])),
+            "expected": copy.deepcopy(dict(entry["expected"])),
+            "actual": copy.deepcopy(dict(entry["actual"])),
+            "passed": bool(entry["passed"]),
+            "receipt": copy.deepcopy(dict(entry["receipt"])),
+        }
+        for entry in actual_entries
+    ]
+    ids = [str(value) for value in subcase_ids]
+    expected_sha = _canonical_sha(expected)
+    actual_sha = _canonical_sha(actual)
+    combined = _canonical_sha(
+        {
+            "expected_subcases_sha256": expected_sha,
+            "actual_subcases_sha256": actual_sha,
+            "subcase_ids": ids,
+        }
+    )
+    return {
+        "expected_subcases": expected,
+        "actual_subcases": actual,
+        "expected_subcases_sha256": expected_sha,
+        "actual_subcases_sha256": actual_sha,
+        "subcase_results_sha256": combined,
+    }
+
+
+def _fake_b5_subcase_entries(
+    plan_case_id: str,
+    value,
+    *,
+    actual: bool,
+    evidence_ref: str | None = None,
+) -> list[dict]:
+    from app.updater.reference import B5_CASES
+
+    plan = B5_CASES[plan_case_id]
+    rendered = str(value)
+    entries: list[dict] = []
+    for subcase in plan.get("subcases") or []:
+        expected = copy.deepcopy(dict(subcase["expected"]))
+        if "fixed_duty" in expected:
+            expected["fixed_duty"] = rendered
+        entry = {
+            "subcase_id": str(subcase["subcase_id"]),
+            "input": copy.deepcopy(dict(subcase["input"])),
+            "expected": expected,
+        }
+        if actual:
+            entry.update(
+                {
+                    "actual": copy.deepcopy(expected),
+                    "passed": True,
+                    "receipt": {
+                        "subcase_id": str(subcase["subcase_id"]),
+                        "engine": "test:fake-b5",
+                        "input_sha256": _canonical_sha(dict(subcase["input"])),
+                    },
+                }
+            )
+        elif evidence_ref is not None:
+            entry["parameter_evidence_ref"] = evidence_ref
+        entries.append(entry)
+    return entries
+
+
+def fake_b5_harness_result(
+    case_id: str,
+    value=AVD_CHANGED,
+    *,
+    plan_case_id: str = B5_REQUIRED_CASE,
+    evidence_ref: str | None = FACT_AVD_110["fact_id"],
+) -> dict:
+    entries = _fake_b5_subcase_entries(
+        plan_case_id,
+        value,
+        actual=False,
+        evidence_ref=evidence_ref,
+    )
+    result = {
+        "case_id": case_id,
+        "subcase_ids": [entry["subcase_id"] for entry in entries],
+        "stages": [str(value)],
+        "output": str(value),
+        "subcase_results": entries,
+    }
+    if evidence_ref is not None:
+        result["parameter_evidence_ref"] = evidence_ref
+    return result
+
+
+def fake_b5_engine_result(
+    case_id: str,
+    value=AVD_CHANGED,
+    *,
+    plan_case_id: str = B5_REQUIRED_CASE,
+) -> dict:
+    entries = _fake_b5_subcase_entries(
+        plan_case_id,
+        value,
+        actual=True,
+    )
+    return {
+        "case_id": case_id,
+        "subcase_ids": [entry["subcase_id"] for entry in entries],
+        "stages": [str(value)],
+        "output": str(value),
+        "subcase_results": entries,
+    }
+
+
+def update_report(
+    store,
+    *,
+    content=None,
+    manifests=(),
+    evidence_refs=(),
+    required_cases=(),
+    decision: str = "publish",
+    passed: int | None = None,
+    failed: int = 0,
+    failed_ids=(),
+    changed_paths=None,
+) -> dict:
+    """Complete update/seed gate report fixture (005 §15.4 binding/coverage/proof)."""
+    from app.config import ENGINE_VERSION
+    from app.core.hashing import bundle_content_hash
+    from app.updater.reference import B5_CASES, REQUIRED_CASES
+
+    baseline = store.current()
+    candidate = (
+        content if content is not None else store.get_bundle(baseline["bundle_id"])
+    )
+    candidate_hash = bundle_content_hash(candidate)
+    manifest_rows = [dict(manifest) for manifest in manifests]
+    evidence_rows = [dict(fact) for fact in evidence_refs]
+    required = [str(case_id) for case_id in required_cases]
+    changed = [str(path) for path in (changed_paths or [])]
+    static_cases = list(REQUIRED_CASES)
+    case_rows: list[dict] = []
+    for case_id in required:
+        plan = B5_CASES.get(case_id) or {}
+        subcase_ids = [str(value) for value in plan.get("subcase_ids") or []]
+        refs = [
+            str(fact.get("fact_id"))
+            for fact in evidence_rows
+            if fact.get("fullpath") == plan.get("path")
+        ]
+        expected_subcases, actual_subcases = _fixture_plan_subcases(plan)
+        row = {
+            "case_id": case_id,
+            "mode": "candidate",
+            "input_proof_sha256": _canonical_sha(
+                {"case_id": case_id, "subcase_ids": subcase_ids}
+            ),
+            "subcase_ids": subcase_ids,
+            "worksheet_sha256": _canonical_sha(
+                {"case_id": case_id, "path": plan.get("path")}
+            ),
+            "parameter_evidence_refs": refs,
+            "stage_match": True,
+            "passed": True,
+        }
+        row.update(
+            _subcase_proof_fields(
+                expected_subcases,
+                actual_subcases,
+                subcase_ids,
+            )
+        )
+        case_rows.append(row)
+    if passed is None:
+        passed = max(1, len(required))
+    return {
+        "decision": decision,
+        "purpose": "update",
+        "binding": {
+            "baseline_bundle_id": baseline["bundle_id"],
+            "baseline_bundle_hash": baseline["bundle_hash"],
+            "baseline_rules_schema_version": baseline["rules_schema_version"],
+            "candidate_bundle_hash": candidate_hash,
+            "engine_version": ENGINE_VERSION,
+            "rules_schema_version": baseline["rules_schema_version"],
+            "profiles": _profile_bindings(candidate),
+            "manifests_sha256": _canonical_sha(manifest_rows),
+            "evidence_sha256": _canonical_sha(evidence_rows),
+            "reference_code_sha256": _reference_code_sha256(),
+            "required_case_ids": list(required),
+        },
+        "coverage": {
+            "changed_paths": changed,
+            "affected_case_ids": list(required),
+            "static_case_ids": static_cases,
+        },
+        "cases": {
+            "required_case_ids": list(required),
+            "executed": len(required),
+            "per_stage_consistent": True,
+            "rows": case_rows,
+        },
+        "regression": {
+            "static_case_ids": static_cases,
+            "static_baseline_bundle_hash": bundle_content_hash(initial_content()),
+            "passed": len(static_cases),
+            "failed": 0,
+            "failed_ids": [],
+        },
+        "gate_environment": {
+            "temp_store_path": str(store._path.parent / "gate-store.db"),
+            "network_calls": 0,
+            "direct_http_attempts": 0,
+            "socket_attempts": 0,
+            "dns_attempts": 0,
+            "session_creations": 0,
+            "pointer_write_attempts": 0,
+            "observers_restored": True,
+            "user_session": False,
+            "current_pointer_written": False,
+            "outside_temp_db": 0,
+            "thread_starts": 0,
+            "subprocess_starts": 0,
+        },
+        "tests": {
+            "passed": passed,
+            "failed": failed,
+            "failed_ids": list(failed_ids),
+        },
+        "quarantine_reason": None if decision == "publish" else "test_failure",
+    }
+
+
+def stop_auto_carriers(sources, fullpath: str) -> list[str]:
+    carriers: list[str] = []
+    for entry in sources:
+        manifest = entry.get("manifest") or {}
+        auto = any(
+            slot.get("fullpath") == fullpath for slot in manifest.get("slots") or []
+        )
+        observed = any(
+            slot.get("fullpath") == fullpath for slot in entry.get("observer_slots") or []
+        )
+        if auto or observed:
+            carriers.append(str(entry.get("source_id")))
+    return carriers
+
+
+def observation_overrides(sources, fullpath: str, value: str) -> dict:
+    return {
+        source_id: {fullpath: value}
+        for source_id in stop_auto_carriers(sources, fullpath)
+    }
+
+
+def observer_pending_rows(store) -> list[tuple[str, str, str]]:
+    conn = store._connect()
+    try:
+        return [
+            (str(row[0]), str(row[1]), str(row[2] or ""))
+            for row in conn.execute(
+                "SELECT source_id, state, period FROM updater_source_states"
+                " WHERE state LIKE 'observer_pending:%' ORDER BY rowid"
+            )
+        ]
+    finally:
+        conn.close()
+
 
 def initial_content() -> dict:
     from app.rules.bundle import INITIAL_BUNDLE_CONTENT
@@ -479,22 +1053,17 @@ def initial_content() -> dict:
 
 
 def changed_bundle_content(value: str) -> dict:
-    """仅改 salaries.reductions.2025_26.cap 的候选 content（DATA-only 差异）。"""
     content = initial_content()
-    content["data"]["salaries"]["reductions"]["2025_26"]["cap"] = value
+    content["data"]["reductions"]["2025_26"]["cap"] = value
     return content
 
 
-# ---------------------------------------------------------------------------
-# 第三批 Red 假件扩展（终验第二轮 REJECTED 缺口）
-# - 受养父母申索事实（Annex C C3.5 既有字段＋拟名三态扩展，见
-#   test_acceptance_dependent_parents.py 头部【拟名】契约）。
-# - 生产 Scheduler 装配读取/注入接缝（manifests 与 harness/engine/
-#   required_cases 绑定的可观测面；clock/outbound 测试替换点）。
-# - 按生产 manifest anchors/slots 渲染「与现行束一致」的官方页快照假件
-#   （测试不必预知 Green 将编写的锚点文本——文档由 manifest 自描述渲染，
-#   值默认取现行束同 fullpath 值 → 无变更；overrides 可按 fullpath 改写）。
-# ---------------------------------------------------------------------------
+def avd_changed_bundle_content(value: str = AVD_CHANGED) -> dict:
+    content = initial_content()
+    content["data"]["stamps"]["property"]["related_conveyance"]["fixed_duty"] = value
+    return content
+
+
 def parent_entry(
     birth_date: str,
     *,
@@ -503,8 +1072,6 @@ def parent_entry(
     maintained: object = True,
     together: object = True,
 ) -> dict:
-    """受养父母申索事实（拟名三态字段：maintained=s.30(4) 供养事实；
-    living_together_all_year=s.30(3)(b) 全年同住额外额事实）。"""
     return {
         "relationship": relationship,
         "birth_date": birth_date,
@@ -515,7 +1082,6 @@ def parent_entry(
 
 
 def resolve_bundle_path(bundle_data, fullpath: str):
-    """按束内规范点路径取 data 值（允许 data. 前缀；缺失 → None）。"""
     parts = fullpath.split(".")
     if parts and parts[0] == "data":
         parts = parts[1:]
@@ -528,35 +1094,47 @@ def resolve_bundle_path(bundle_data, fullpath: str):
 
 
 def scheduler_sources(scheduler) -> list:
-    """生产 Scheduler 的来源条目（公开名 sources 或下划线名均可）。"""
     for name in ("sources", "_sources"):
         if hasattr(scheduler, name):
             return getattr(scheduler, name)
-    raise AttributeError("Scheduler 未暴露来源清单（sources/_sources 接缝）")
+    raise AttributeError("Scheduler does not expose sources (_sources)")
 
 
 def scheduler_binding(scheduler, name: str):
-    """读取 Scheduler 绑定（harness／engine／required_cases；公开名优先）。"""
     for candidate in (name, f"_{name}"):
         if hasattr(scheduler, candidate):
             return getattr(scheduler, candidate)
     return None
 
 
-def inject_scheduler_seams(scheduler, *, clock=None, outbound=None) -> None:
-    """替换生产 Scheduler 的 clock/outbound（其余生产装配保持不变）。"""
-    for name, value in (("clock", clock), ("outbound", outbound)):
+def inject_scheduler_seams(
+    scheduler,
+    *,
+    clock=None,
+    outbound=None,
+    sources=None,
+    harness=None,
+    engine=None,
+    required_cases=None,
+) -> None:
+    for name, value in (
+        ("clock", clock),
+        ("outbound", outbound),
+        ("harness", harness),
+        ("engine", engine),
+        ("required_cases", required_cases),
+    ):
         if value is None:
             continue
         setattr(scheduler, name if hasattr(scheduler, name) else f"_{name}", value)
+    if sources is not None:
+        setattr(scheduler, "sources" if hasattr(scheduler, "sources") else "_sources", sources)
+        ids = [str(source.get("source_id")) for source in sources]
+        if hasattr(scheduler, "_source_ids"):
+            setattr(scheduler, "_source_ids", ids)
 
 
 def _anchor_parts(anchor: str) -> tuple[str, str, str]:
-    """C7.3 锚定语法 heading:<H>[#row:R][#col:C] → (heading, row, col)。
-
-    缺省 row/col 用占位标签（锚定缺 col 时 extract 本身 fail closed，
-    与渲染无关）。
-    """
     heading, row, col = anchor, "Item", "Value"
     for part in anchor.split("#"):
         if part.startswith("heading:"):
@@ -568,22 +1146,29 @@ def _anchor_parts(anchor: str) -> tuple[str, str, str]:
     return heading, row, col
 
 
-def render_source_document(manifest: dict, bundle_data: dict, overrides: dict | None = None) -> bytes:
-    """按 manifest 渲染官方页快照假件（与现行束一致；可按 fullpath 改写值）。
-
-    - 同一 heading 的 slots 合并渲染为一个 h2 节（节内逐 slot 一张两列表，
-      行标/列标命中 C7.3 锚定单元格）；值默认＝现行束该 fullpath 的值。
-    - legal_state_rules 的锚定节渲染为「无通知」占位文本（不触发任何
-      match 关键词 → SOURCE 状态不 enter）。
-    """
+def render_source_document(
+    manifest: dict,
+    bundle_data: dict,
+    overrides: dict | None = None,
+    observer_slots: list | None = None,
+) -> bytes:
     esc = _html_escape
     sections: dict[str, list[tuple[str, str, str]]] = {}
     order: list[str] = []
-    for slot in manifest.get("slots") or []:
+    observer_slots = list(observer_slots or [])
+    observer_ids = {id(slot) for slot in observer_slots}
+    slots = list(manifest.get("slots") or []) + observer_slots
+    for slot in slots:
         heading, row, col = _anchor_parts(str(slot.get("anchor") or ""))
-        value = (overrides or {}).get(slot.get("fullpath"))
+        fullpath = str(slot.get("fullpath") or "")
+        value = (overrides or {}).get(fullpath)
         if value is None:
-            resolved = resolve_bundle_path(bundle_data, str(slot.get("fullpath") or ""))
+            baseline_path = (
+                STOP_AUTO_TARGETS.get(fullpath, fullpath)
+                if id(slot) in observer_ids
+                else fullpath
+            )
+            resolved = resolve_bundle_path(bundle_data, baseline_path)
             value = resolved if resolved is not None else "__unresolved__"
         if heading not in sections:
             sections[heading] = []
@@ -605,17 +1190,19 @@ def render_source_document(manifest: dict, bundle_data: dict, overrides: dict | 
             if heading not in sections and heading not in rule_headings:
                 rule_headings.append(heading)
     for heading in rule_headings:
-        parts.append(f"<h2>{esc(heading)}</h2><p>（本节为占位渲染，无通知内容。）</p>")
+        parts.append(f"<h2>{esc(heading)}</h2><p>placeholder-no-notice</p>")
     parts.append("</body></html>")
     return "".join(parts).encode("utf-8")
 
 
 def production_round_documents(sources, bundle_data, overrides_by_source=None) -> dict:
-    """全部生产来源 → 渲染快照假件（url → bytes；驱动完整检查轮用）。"""
     documents: dict = {}
     for entry in sources:
         overrides = (overrides_by_source or {}).get(str(entry.get("source_id"))) or {}
         documents[str(entry.get("url"))] = render_source_document(
-            entry.get("manifest") or {}, bundle_data, overrides
+            entry.get("manifest") or {},
+            bundle_data,
+            overrides,
+            entry.get("observer_slots"),
         )
     return documents

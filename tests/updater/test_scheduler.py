@@ -68,7 +68,9 @@ from collections import Counter
 from pathlib import Path
 
 from _fakes import (
+    BUDGET_DOC_CHANGED,
     BUDGET_DOC_EXPIRED_NOTICE,
+    BUDGET_DOC_OK,
     BUDGET_DOC_PROPOSAL_NOTICE,
     BUDGET_DOC_UNCERTAIN_NOTICE,
     BUDGET_URL,
@@ -81,6 +83,8 @@ from _fakes import (
     base_documents,
     hk,
     make_scheduler,
+    observer_pending_rows,
+    observer_sources,
     seed_published_store,
 )
 
@@ -116,6 +120,44 @@ def _wait_for(predicate, timeout: float = 10.0) -> None:
             return
         time.sleep(0.01)
     raise AssertionError("等待条件超时（假出站应已收到抓取请求）")
+
+
+def _close_concurrency(
+    *,
+    hold: threading.Event,
+    timer: threading.Timer,
+    threads: tuple[threading.Thread | None, ...],
+) -> list[str]:
+    """无条件释放阻塞＋有界收口 timer/线程；返回残留问题（供 finally 报告）。
+
+    W-L L5：释放必须无条件（先于任何 join，不得依赖断言成功路径）；
+    timer/线程 join 均有界；有界等待后仍存活的残留显式报告，绝不静默。
+    """
+    problems: list[str] = []
+    try:
+        hold.set()  # 无条件释放（阻塞抓取必须能退出）
+    except BaseException as exc:  # noqa: BLE001 - 释放失败必须显式暴露
+        problems.append(f"hold.set 异常：{exc!r}")
+    try:
+        timer.cancel()
+    except BaseException as exc:  # noqa: BLE001
+        problems.append(f"timer.cancel 异常：{exc!r}")
+    try:
+        timer.join(timeout=5)
+    except BaseException as exc:  # noqa: BLE001 - 未启动/已结束的 join 也须暴露
+        problems.append(f"timer.join 异常：{exc!r}")
+    if timer.is_alive():
+        problems.append("释放计时器有界等待后仍存活")
+    for thread in threads:
+        if thread is None or thread.ident is None:  # 未创建/未启动：无需收口
+            continue
+        try:
+            thread.join(timeout=15)
+        except BaseException as exc:  # noqa: BLE001
+            problems.append(f"{thread.name}.join 异常：{exc!r}")
+        if thread.is_alive():
+            problems.append(f"{thread.name} 有界等待后仍存活（残留线程）")
+    return problems
 
 
 def test_first_startup_due(tmp_path) -> None:
@@ -230,39 +272,59 @@ def test_manual_same_pipeline_singleflight(tmp_path) -> None:
         outbound=outbound,
     )
 
-    # 假出站阻塞首个手动触发，模拟长跑检查
+    # 假出站阻塞首个手动触发，模拟长跑检查；释放/线程/timer 收口无条件且有界
     outbound.hold = threading.Event()
-    release = threading.Timer(2.0, outbound.hold.set)
-    release.start()
+    release_timer = threading.Timer(2.0, outbound.hold.set)
     results: dict[str, dict] = {}
     first_thread = threading.Thread(
-        target=lambda: results.setdefault("first", sched.trigger_manual())
+        target=lambda: results.setdefault("first", sched.trigger_manual()),
+        name="hktax-test-manual-first",
     )
-    first_thread.start()
-    _wait_for(lambda: bool(outbound.requests))
-
-    active = sched.status()["active_job"]
-    assert active is not None and active["status"] == "running"
-
-    # 进行中再触发：不得重跑、不得阻塞等待首个作业完成
     second_thread = threading.Thread(
-        target=lambda: results.setdefault("second", sched.trigger_manual())
+        target=lambda: results.setdefault("second", sched.trigger_manual()),
+        name="hktax-test-manual-second",
     )
-    second_thread.start()
-    second_thread.join(timeout=15)
-    assert not second_thread.is_alive(), (
-        "singleflight：进行中再触发必须立即返回现有作业，不得排队重跑或阻塞"
-    )
-    second = results["second"]
-    assert second["job_id"] == active["job_id"], "再触发返回同一 job_id"
-    assert second["in_progress"] is True, "再触发时作业仍在进行（API 层映射 202）"
+    primary: BaseException | None = None
+    release_timer.start()
+    try:
+        first_thread.start()
+        _wait_for(lambda: bool(outbound.requests))
 
-    outbound.hold.wait()
-    first_thread.join(timeout=10)
-    assert not first_thread.is_alive()
-    first = results["first"]
-    assert first["job_id"] == active["job_id"]
-    assert first["status"] == "succeeded"
+        active = sched.status()["active_job"]
+        assert active is not None and active["status"] == "running"
+
+        # 进行中再触发：不得重跑、不得阻塞等待首个作业完成
+        second_thread.start()
+        second_thread.join(timeout=15)
+        assert not second_thread.is_alive(), (
+            "singleflight：进行中再触发必须立即返回现有作业，不得排队重跑或阻塞"
+        )
+        second = results["second"]
+        assert second["job_id"] == active["job_id"], "再触发返回同一 job_id"
+        assert second["in_progress"] is True, "再触发时作业仍在进行（API 层映射 202）"
+
+        assert outbound.hold.wait(timeout=15), (
+            "释放计时器应在有界时间内解除假出站阻塞"
+        )
+        first_thread.join(timeout=15)
+        assert not first_thread.is_alive()
+        first = results["first"]
+        assert first["job_id"] == active["job_id"]
+        assert first["status"] == "succeeded"
+    except BaseException as exc:  # noqa: BLE001 - 主失败不得跳过收口
+        primary = exc
+        raise
+    finally:
+        residual = _close_concurrency(
+            hold=outbound.hold,
+            timer=release_timer,
+            threads=(first_thread, second_thread),
+        )
+        if residual:
+            message = "并发收口残留：" + "；".join(residual)
+            if primary is not None:
+                raise AssertionError(message + f"（主失败：{primary!r}）") from primary
+            raise AssertionError(message)
 
     # 全程只产生一条 update_jobs 行（singleflight，无重复作业）
     conn = sqlite3.connect(db_path)
@@ -526,7 +588,39 @@ def test_offline_verified_snapshot_with_notice(tmp_path) -> None:
 
 
 def test_known_change_or_expired_refuses_affected(tmp_path) -> None:
-    """REQ-18：已知未核变更/过期 → 拒绝受影响期间（非泛化警告）；提案不阻断。"""
+    """REQ-18：已知未核变更/过期 → 拒绝受影响期间；observer pending 粘滞。"""
+    # —— (0) stop-auto 观察先落 durable pending；普通 notice 同步不得清除 ——
+    observer_store = seed_published_store(tmp_path, "observer-sync.db")
+    observer = make_scheduler(
+        observer_store,
+        clock=FakeClock(hk(2026, 3, 2)),
+        outbound=FakeOutbound(
+            {BUDGET_URL: BUDGET_DOC_CHANGED, SDO_INDEX_URL: SDO_INDEX_DOC}
+        ),
+        sources=observer_sources(),
+    )
+    observer_job = observer.startup()
+    assert observer_job is not None and observer_job["status"] == "succeeded"
+    assert observer_pending_rows(observer_store), (
+        "旧 salary 路径变更须落 observer_pending（005 §15.5）"
+    )
+    assert "related_change_uncertain" in observer.source_states()["ird_budget"]
+    assert observer.availability("2025_26")["mode"] == "blocked"
+
+    observer._clock.advance(days=40)
+    observer._outbound.documents[BUDGET_URL] = BUDGET_DOC_UNCERTAIN_NOTICE
+    assert observer.tick()["status"] == "succeeded"
+    assert observer_pending_rows(observer_store), (
+        "普通 notice 同步（_sync_source_states）不得删除 observer_pending 行"
+    )
+    assert observer.availability("2025_26")["mode"] == "blocked"
+    observer._outbound.documents[BUDGET_URL] = BUDGET_DOC_OK
+    observer._clock.advance(days=40)
+    assert observer.tick()["status"] == "succeeded"
+    assert observer_pending_rows(observer_store), (
+        "同值成功观察不得清除 sticky pending"
+    )
+
     # —— (1) related_change_uncertain：已知相关变更且生效状态未核实 → 阻断受影响期间
     uncertain = FakeOutbound(
         {BUDGET_URL: BUDGET_DOC_UNCERTAIN_NOTICE, SDO_INDEX_URL: SDO_INDEX_DOC}

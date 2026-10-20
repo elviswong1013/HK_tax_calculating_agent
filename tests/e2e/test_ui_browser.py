@@ -1,7 +1,8 @@
 """M6 浏览器 e2e（REQ-12；Annex A §9/§12.9 浏览器层断言）。
 
-本文件为需要 Chromium 的独立 e2e 标记文件（pytest.mark.e2e）：
-浏览器二进制未安装时全部 SKIP（Green 阶段执行 `playwright install chromium`）。
+本文件为需要 Chromium 的独立 e2e 标记文件（pytest.mark.e2e；
+共享隔离/启动见 tests/e2e/conftest.py 的 `e2e_isolation`，006 §6 ①–⑤）：
+Chromium 不可用＝BLOCKED（skip 不计通过；不自动安装）。
 SSR 结构断言在 tests/ui/（httpx），本文件补充只能真实浏览器验证的行为：
   - 弹窗焦点进入/关闭回触发控件、Escape 关闭（Annex A §9）；
   - aria-live 通告存在、主动作原生键盘可达（§9 全键盘）;
@@ -14,74 +15,9 @@ REQ: REQ-12（Annex A §3/§4/§6/§9；specs/001 §9 REQ-12 行）。
 
 from __future__ import annotations
 
-import os
-import socket
-import threading
-import time
-
 import pytest
 
 pytestmark = [pytest.mark.e2e]
-
-
-def _free_port() -> int:
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
-
-
-@pytest.fixture(scope="module")
-def base_url(tmp_path_factory):
-    """受控回环启动被测应用（真实 uvicorn；单 worker；临时 DB）。"""
-    import uvicorn
-
-    db_dir = tmp_path_factory.mktemp("e2e-ui")
-    old = os.environ.get("HKTAX_DB_PATH")
-    os.environ["HKTAX_DB_PATH"] = str(db_dir / "rules.db")
-    try:
-        from app.main import create_app  # 延迟导入：失败原因=缺失 app 行为
-
-        app = create_app()
-    finally:
-        if old is None:
-            os.environ.pop("HKTAX_DB_PATH", None)
-        else:
-            os.environ["HKTAX_DB_PATH"] = old
-
-    port = _free_port()
-    config = uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_level="warning", workers=1
-    )
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline and not server.started:
-        time.sleep(0.05)
-    assert server.started, "e2e 服务器未能在 15s 内启动（127.0.0.1 受控回环）"
-    yield f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    thread.join(timeout=10)
-
-
-@pytest.fixture
-def page(base_url):
-    """Chromium 页面；浏览器缺失时整文件 SKIP（安装留给 Green 阶段）。"""
-    from playwright.sync_api import expect, sync_playwright
-
-    expect.set_options(timeout=3000)
-    with sync_playwright() as pw:
-        try:
-            browser = pw.chromium.launch()
-        except Exception as exc:  # noqa: BLE001 —— 缺浏览器二进制＝环境未就绪
-            pytest.skip(f"需要 Chromium（Green 阶段运行 playwright install chromium）：{exc}")
-        context = browser.new_context()
-        pg = context.new_page()
-        yield pg
-        context.close()
-        browser.close()
 
 
 def test_core_flows_375_and_1280(page, base_url) -> None:

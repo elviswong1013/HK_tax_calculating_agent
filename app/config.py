@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-ENGINE_VERSION = "0.1.0"
-RULES_SCHEMA_VERSION = "1.0.0"
+ENGINE_VERSION = "0.2.0"
+RULES_SCHEMA_VERSION = "2.0.0"
 DEFAULT_PORT = 8000
 PREPARE_TTL_SECONDS = 300  # C3.2.1：prepared TTL
 CONFIRMATION_TTL_SECONDS = 300  # C3.2.2：确认能力 TTL

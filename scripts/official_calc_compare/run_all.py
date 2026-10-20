@@ -1,14 +1,21 @@
 """End-to-end runner: drives the official calculators, compares with app.engines,
-and writes docs/validation/002-live-official-calculator-comparison.md.
+and writes the comparison report.
 
 Usage (from the repo root):
     .venv/Scripts/python.exe -m scripts.official_calc_compare.run_all
-      [--report PATH] [--screenshots DIR] [--skip-live]
+      [--report PATH] [--screenshots DIR] [--owner NAME]
+      # default: OFFLINE fixed-bundle verification (no network, no browser)
 
-Only ever writes:
-  - the report markdown (default docs/validation/002-live-official-calculator-comparison.md)
-  - PNG screenshots (default docs/validation/screenshots/)
-Nothing else in the repository is touched.
+    .venv/Scripts/python.exe -m scripts.official_calc_compare.run_all --live
+      # explicit opt-in: drive IRD/GovHK official calculators over the network
+
+Offline mode only writes the report markdown; it never launches Playwright and
+never touches the network. It asserts each fixed case against the frozen
+expected values and labels the output "固定束核验/模拟，不代表实时规则可用性".
+exit 0 therefore means "fixed-bundle assertions passed", NOT live correctness.
+
+Live mode additionally writes PNG screenshots. `--skip-live` is retained as a
+deprecated compatibility alias for the (now default) offline mode.
 """
 from __future__ import annotations
 
@@ -33,6 +40,44 @@ from .local_engine import run_all_cases
 from .transport import OfficialFetcher
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+LIVE_REPORT_PATH = REPO_ROOT / "docs" / "validation" / "002-live-official-calculator-comparison.md"
+OFFLINE_REPORT_PATH = (
+    REPO_ROOT / "docs" / "validation" / "002-fixed-bundle-simulation-report.md"
+)
+LIVE_SCREENSHOTS_PATH = REPO_ROOT / "docs" / "validation" / "screenshots"
+
+# Frozen fixed-bundle expectations. These come from the previously executed
+# official comparison (docs/validation/002-live-official-calculator-comparison.md)
+# and the 002 engine tests; they are NOT live-rule evidence.
+FIXED_EXPECTED: dict[str, dict[str, object]] = {
+    "salaries_2024_25": {
+        "status": "complete",
+        "value": "2440",
+        "before_reduction": "3940",
+        "reduction": "1500",
+        "next_provisional": "3940",
+    },
+    "salaries_2025_26": {
+        "status": "complete",
+        "value": "940",
+        "before_reduction": "3940",
+        "reduction": "3000",
+        "next_provisional": "3160",
+    },
+    "salaries_2026_27": {
+        "status": "partial",
+        "value": "3160",
+        "before_reduction": "3160",
+        "reduction": "0",
+        "next_provisional": None,
+    },
+    "avd_case1_20260601": {"status": "complete", "value": "4250000"},
+    "avd_case2_20250601": {"status": "complete", "value": "64856"},
+    "lease_6months": {"status": "complete", "value": "150"},
+    "stock_sale_notes_1000_01": {"status": "complete", "value": "4"},
+    "stock_other_transfer_doc": {"status": "complete", "value": "5"},
+    "stock_voluntary_1000_01": {"status": "complete", "value": "8"},
+}
 
 FAILED_ATTEMPTS = [
     ("直接 HTTPS（python urllib / curl）", "TLS 握手超时：本机 TUN 代理为 fake-ip DNS，"
@@ -176,6 +221,8 @@ def render_report(
     transport_log: list[str],
     shot_dir: Path,
     report_path: Path,
+    *,
+    owner: str = "002-live-official-comparison",
 ) -> str:
     rel = lambda name: f"screenshots/{Path(name).name}"  # noqa: E731
     by_name = {c.name: c for c in cases}
@@ -186,6 +233,8 @@ def render_report(
 
     add("# 002 - 官方计算器实时驱动对比（Playwright，IRD/GovHK）")
     add("")
+    add(f"- **Owner**：`{owner}`")
+    add("- **运行模式**：`live`（显式 opt-in；真实网络驱动官方计算器）")
     add("任务：用 Playwright 实时驱动 IRD/GovHK 官方网页计算器，与本仓库 app.engines 纯函数对同一输入的输出对照。")
     add("")
     add("- **运行时间**：" + (cases[0].started_at if cases else "n/a") + " ～ " + (cases[-1].finished_at if cases else "n/a") + "（HKT）")
@@ -522,83 +571,201 @@ def render_report(
     return text
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", default=str(REPO_ROOT / "docs/validation/002-live-official-calculator-comparison.md"))
-    parser.add_argument("--screenshots", default=str(REPO_ROOT / "docs/validation/screenshots"))
-    parser.add_argument("--skip-live", action="store_true", help="跳过在线驱动，仅重算引擎并重写报告（调试用）")
-    args = parser.parse_args()
+def _expected_failures(case: str, outcome) -> list[str]:
+    expected = FIXED_EXPECTED[case]
+    failures: list[str] = []
+    for field, wanted in expected.items():
+        actual = getattr(outcome, field)
+        if actual != wanted:
+            failures.append(f"{case}.{field}: expected {wanted!r}, got {actual!r}")
+    provenance = outcome.provenance or {}
+    if provenance.get("simulation") is not True:
+        failures.append(f"{case}.provenance: missing simulation=true marker")
+    if not provenance.get("bundle_hash"):
+        failures.append(f"{case}.provenance: missing bundle_hash")
+    if case.startswith("salaries"):
+        availability = (outcome.context or {}).get("availability")
+        if not isinstance(availability, dict) or "binding" not in availability:
+            failures.append(f"{case}.context: missing explicit AvailabilityContext")
+    return failures
 
-    shot_dir = Path(args.screenshots)
+
+def assert_fixed_bundle(outcomes) -> list[str]:
+    """Assert every fixed case against the frozen expected values.
+
+    exit 0 means these assertions passed; it is not live-rule correctness.
+    """
+    failures: list[str] = []
+    for case in FIXED_EXPECTED:
+        outcome = outcomes.get(case)
+        if outcome is None:
+            failures.append(f"{case}: missing engine outcome")
+            continue
+        failures.extend(_expected_failures(case, outcome))
+    return failures
+
+
+def render_offline_report(
+    outcomes,
+    failures: list[str],
+    report_path: Path,
+    *,
+    owner: str,
+) -> str:
+    lines: list[str] = []
+    add = lines.append
+    add("# 002 - 固定束核验/模拟报告（离线；非实时官方驱动）")
+    add("")
+    add(f"- **Owner**：`{owner}`")
+    add("- **运行模式**：`offline`（默认；不启动 Playwright、不访问网络、不驱动官方计算器）")
+    add("- **性质声明**：**固定束核验/模拟，不代表实时规则可用性**。")
+    add("- **exit 语义**：exit 0＝下列固定束逐 case 断言全部通过；**不等于**官方/实时计算正确性，也不代表 live 对比通过。")
+    first = next(iter(outcomes.values()))
+    provenance = first.provenance if first is not None else {}
+    add(
+        "- **固定束**：id=`{}`；hash=`{}`；rules_schema_version={}；engine_version={}；"
+        "所有 case 均显式绑定该束（非 current store、非网络）。".format(
+            provenance.get("bundle_id"),
+            provenance.get("bundle_hash"),
+            provenance.get("rules_schema_version"),
+            provenance.get("engine_version"),
+        )
+    )
+    add("")
+    add("## 1. 逐 case 断言（固定束）")
+    add("")
+    add("| case | status | before | reduction | final | next provisional | 断言 |")
+    add("| --- | --- | --- | --- | --- | --- | --- |")
+    for case in FIXED_EXPECTED:
+        outcome = outcomes.get(case)
+        if outcome is None:
+            add(f"| {case} | （缺失） | — | — | — | — | ❌ FAIL |")
+            continue
+        case_failures = _expected_failures(case, outcome)
+        verdict = "✅ PASS" if not case_failures else "❌ FAIL"
+        add(
+            "| {} | {} | {} | {} | {} | {} | {} |".format(
+                case,
+                outcome.status,
+                outcome.before_reduction if outcome.before_reduction is not None else "null",
+                outcome.reduction if outcome.reduction is not None else "null",
+                outcome.value if outcome.value is not None else "null",
+                outcome.next_provisional if outcome.next_provisional is not None else "null",
+                verdict,
+            )
+        )
+    add("")
+    add(f"- 断言合计：{len(FIXED_EXPECTED)} cases；失败 {len(failures)} 项。")
+    if failures:
+        add("")
+        add("失败明细：")
+        for failure in failures:
+            add(f"- `{failure}`")
+    add("")
+    add("## 2. 方法与限制")
+    add("")
+    add(
+        "本离线报告只运行 `app.engines` 纯函数，读取发行固定束 `INITIAL_BUNDLE_CONTENT`。"
+        "期望值来自已执行并留痕的官方对比报告（`docs/validation/002-live-official-calculator-comparison.md`）"
+        "及 `tests/engines`/`tests/acceptance` 的独立期望；不接受 exit 0 作为正确性证明。"
+    )
+    add("")
+    add("live 分支必须显式 `--live` opt-in；离线模式不调用 live 驱动、不访问网络、不产生截图。")
+    add("")
+    add("## 3. 复现")
+    add("")
+    add("```powershell")
+    add(
+        ".venv\\Scripts\\python.exe -m scripts.official_calc_compare.run_all "
+        f"--report \"{report_path}\" --owner {owner}"
+    )
+    add("```")
+    add("")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(lines)
+    report_path.write_text(text, encoding="utf-8")
+    return text
+
+
+def _run_live(
+    *,
+    report_path: Path,
+    shot_dir: Path,
+    owner: str,
+) -> int:
     shot_dir.mkdir(parents=True, exist_ok=True)
-
     cases: list[CaseResult] = []
     fetcher = OfficialFetcher()
     transport_log: list[str] = []
 
-    if not args.skip_live:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            try:
-                context = browser.new_context(
-                    viewport={"width": 1280, "height": 1000},
-                    locale="en-US",
-                )
-                context.set_default_timeout(30_000)
-                context.route("**/*", build_route_handler(fetcher))
-                # frameset-bootstrap shim for stc.htm (scoped to stc URLs inside)
-                context.add_init_script(STC_BOOTSTRAP_JS)
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(
+                viewport={"width": 1280, "height": 1000},
+                locale="en-US",
+            )
+            context.set_default_timeout(30_000)
+            context.route("**/*", build_route_handler(fetcher))
+            # frameset-bootstrap shim for stc.htm (scoped to stc URLs inside)
+            context.add_init_script(STC_BOOTSTRAP_JS)
 
-                # 1) salaries tax, three assessment years, same inputs
-                for year_label, year_dir, shot in (
-                    ("2024_25", "st_comp_2024_25", "01_stc_2024_25"),
-                    ("2025_26", "st_comp_2025_26", "02_stc_2025_26"),
-                    ("2026_27", "st_comp_2026_27", "03_stc_2026_27"),
-                ):
-                    cases.append(drive_salaries_year(
-                        context, year_label, year_dir,
-                        income="240000", mpf="9000",
-                        screenshot_prefix=str(shot_dir / shot),
-                    ))
-
-                # 2) GovHK entry -> residential AVD calculator, two cases
-                cases.append(drive_govhk_entry(context, str(shot_dir / "04_govhk")))
-                cases.append(drive_avd_case(
-                    context, "avd_case1_20260601", "100000000",
-                    str(shot_dir / "04_avd_case1"),
-                ))
-                cases.append(drive_avd_case(
-                    context, "avd_case2_20250601", "4323780",
-                    str(shot_dir / "05_avd_case2"),
+            # 1) salaries tax, three assessment years, same inputs
+            for year_label, year_dir, shot in (
+                ("2024_25", "st_comp_2024_25", "01_stc_2024_25"),
+                ("2025_26", "st_comp_2025_26", "02_stc_2025_26"),
+                ("2026_27", "st_comp_2026_27", "03_stc_2026_27"),
+            ):
+                cases.append(drive_salaries_year(
+                    context, year_label, year_dir,
+                    income="240000", mpf="9000",
+                    screenshot_prefix=str(shot_dir / shot),
                 ))
 
-                # 3) lease calculator (csdta.htm), 6 months, total rent 60000
-                cases.append(drive_lease_case(
-                    context, total_rent="60000", monthly_equiv="10000",
-                    start=("01", "07", "2025"), end=("31", "12", "2025"),
-                    screenshot_prefix=str(shot_dir / "06_lease"),
-                ))
+            # 2) GovHK entry -> residential AVD calculator, two cases
+            cases.append(drive_govhk_entry(context, str(shot_dir / "04_govhk")))
+            cases.append(drive_avd_case(
+                context, "avd_case1_20260601", "100000000",
+                str(shot_dir / "04_avd_case1"),
+            ))
+            cases.append(drive_avd_case(
+                context, "avd_case2_20250601", "4323780",
+                str(shot_dir / "05_avd_case2"),
+            ))
 
-                # 4) stock share-transfer calculator (sdshare.htm), extension item B:
-                #    GovHK eTax entry page click-through + two cases (sale / voluntary)
-                cases.append(drive_govhk_stock_entry(context, str(shot_dir / "07_govhk_stock")))
-                cases.append(drive_stock_case(
-                    context, mode="sale", amount="1000.01",
-                    case_id="stock_sale_notes_1000_01",
-                    screenshot_prefix=str(shot_dir / "07_stock_sale"),
-                ))
-                cases.append(drive_stock_case(
-                    context, mode="voluntary", amount="1000.01",
-                    case_id="stock_voluntary_1000_01",
-                    screenshot_prefix=str(shot_dir / "08_stock_voluntary"),
-                ))
-            finally:
-                browser.close()
-        transport_log.extend(fetcher.log)
+            # 3) lease calculator (csdta.htm), 6 months, total rent 60000
+            cases.append(drive_lease_case(
+                context, total_rent="60000", monthly_equiv="10000",
+                start=("01", "07", "2025"), end=("31", "12", "2025"),
+                screenshot_prefix=str(shot_dir / "06_lease"),
+            ))
+
+            # 4) stock share-transfer calculator (sdshare.htm), extension item B:
+            #    GovHK eTax entry page click-through + two cases (sale / voluntary)
+            cases.append(drive_govhk_stock_entry(context, str(shot_dir / "07_govhk_stock")))
+            cases.append(drive_stock_case(
+                context, mode="sale", amount="1000.01",
+                case_id="stock_sale_notes_1000_01",
+                screenshot_prefix=str(shot_dir / "07_stock_sale"),
+            ))
+            cases.append(drive_stock_case(
+                context, mode="voluntary", amount="1000.01",
+                case_id="stock_voluntary_1000_01",
+                screenshot_prefix=str(shot_dir / "08_stock_voluntary"),
+            ))
+        finally:
+            browser.close()
+    transport_log.extend(fetcher.log)
 
     engine_outcomes = run_all_cases()
-    report_path = Path(args.report)
-    render_report(cases, engine_outcomes, transport_log, shot_dir, report_path)
+    render_report(
+        cases,
+        engine_outcomes,
+        transport_log,
+        shot_dir,
+        report_path,
+        owner=owner,
+    )
 
     # console summary
     print("=" * 78)
@@ -615,6 +782,7 @@ def main() -> int:
     print("-" * 78)
     matches = 0
     total = 0
+    live_failures: list[str] = []
     by_name = {c.name: c for c in cases}
     # (label, official_case_key, engine_key, official_override) - the stock IOT
     # comparable reads the IOT value from the same official result page as the
@@ -636,14 +804,108 @@ def main() -> int:
         e = engine_outcomes[engine_key]
         official = override if override is not None else (c.official_value if c else None)
         total += 1
-        if official and normalize_amount(official) == normalize_amount(e.value):
+        ok = bool(official) and normalize_amount(official) == normalize_amount(e.value)
+        if ok:
             matches += 1
-        status = "match" if (official and normalize_amount(official) == normalize_amount(e.value)) else "MISMATCH-OR-LIMITED"
+        else:
+            live_failures.append(label)
+        status = "match" if ok else "MISMATCH-OR-LIMITED"
         print(f"[compare] {label:<32} official={official or 'n/a':<12} engine={e.value} -> {status}")
     print(f"comparison: {matches}/{total} comparables matched (engine value == official displayed value)")
     print(f"report: {report_path}")
     print(f"screenshots dir: {shot_dir}")
+    if live_failures:
+        print(
+            "FAIL: live comparison incomplete/mismatched: " + ", ".join(live_failures),
+            file=sys.stderr,
+        )
+        return 1
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--report",
+        default=None,
+        help=(
+            "报告输出路径（offline 默认 docs/validation/002-fixed-bundle-simulation-report.md；"
+            "live 默认 docs/validation/002-live-official-calculator-comparison.md）"
+        ),
+    )
+    parser.add_argument(
+        "--screenshots",
+        default=None,
+        help="截图目录（仅 live；offline 不产生截图）",
+    )
+    parser.add_argument(
+        "--owner",
+        default="002",
+        help="报告 owner 标注（默认 002）",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="显式 opt-in live 驱动官方计算器（真实网络；默认关闭）",
+    )
+    parser.add_argument(
+        "--skip-live",
+        action="store_true",
+        help="已废弃兼容别名：等同于默认 offline 模式",
+    )
+    args = parser.parse_args(argv)
+
+    if args.skip_live:
+        args.live = False
+
+    if not args.live:
+        report_path = (
+            Path(args.report) if args.report is not None else OFFLINE_REPORT_PATH
+        )
+        if report_path.resolve() == LIVE_REPORT_PATH.resolve():
+            print(
+                "FAIL: offline 模式禁止覆盖 live 历史报告 "
+                f"{LIVE_REPORT_PATH}（请显式指定 EV/reports 路径）",
+                file=sys.stderr,
+            )
+            return 2
+        outcomes = run_all_cases()
+        failures = assert_fixed_bundle(outcomes)
+        render_offline_report(
+            outcomes,
+            failures,
+            report_path,
+            owner=args.owner,
+        )
+        print("=" * 78)
+        print("002 fixed-bundle verification (offline) - run summary")
+        print("=" * 78)
+        for case in FIXED_EXPECTED:
+            outcome = outcomes[case]
+            case_failures = _expected_failures(case, outcome)
+            verdict = "PASS" if not case_failures else "FAIL"
+            print(
+                f"[{verdict:>4}] {case:<28} status={outcome.status:<9} "
+                f"value={outcome.value} next={outcome.next_provisional}"
+            )
+            for failure in case_failures:
+                print(f"       {failure}")
+        print("-" * 78)
+        print(f"fixed assertions: {len(FIXED_EXPECTED)} cases, {len(failures)} failure(s)")
+        print(
+            "note: 固定束核验/模拟，不代表实时规则可用性；"
+            "exit 0 不等于 live/官方正确性"
+        )
+        print(f"report: {report_path}")
+        if args.screenshots:
+            print("offline mode: screenshots not produced (live only)")
+        return 1 if failures else 0
+
+    report_path = Path(args.report) if args.report is not None else LIVE_REPORT_PATH
+    shot_dir = (
+        Path(args.screenshots) if args.screenshots is not None else LIVE_SCREENSHOTS_PATH
+    )
+    return _run_live(report_path=report_path, shot_dir=shot_dir, owner=args.owner)
 
 
 if __name__ == "__main__":

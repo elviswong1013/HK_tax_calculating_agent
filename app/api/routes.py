@@ -1,10 +1,9 @@
 """API 路由（Annex C C3.1 端点表；C3.2 prepare→confirm→execute 三段；C4 同意）。
 
 M6 覆盖：calc prepare/confirm/execute（7 个执行目标端点，execute 已接
-app/engines/* 纯函数；prepare/execute 均经 _consult_availability 咨询
-app.state.update_scheduler.availability——blocked 受影响期间以
-E_RULES_STATE_UNVERIFIABLE 拒算，trusted_offline 可算但必带中文离线 notice，
-mode=ok 不加提示；调度器缺席时守卫跳过）、meta coverage/rules/version、records 读取（no-store）/
+app/engines/* 纯函数；prepare 单快照（pin→束→guard→admission 同一 store
+写锁窗口）与 execute 消费（registry→store 临界区重查 current＋next）均经
+guard-contract §3–§4；meta coverage/rules/version、records 读取（no-store）/
 下载（attachment＋全量）/原包重放（按确认事实＋原 binding 重算，引擎版本
 完全相等才兼容）、report/print（inline，§6.6 保留要素）、AI consent
 preview/授予/撤回/chat（C4.5–C4.8）、update check/jobs（singleflight 202，
@@ -16,7 +15,9 @@ preview/授予/撤回/chat（C4.5–C4.8）、update check/jobs（singleflight 2
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import json
 import secrets
 import time
 from typing import Any
@@ -25,7 +26,12 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.ai.tools import ToolContext, execute_tool_calls, normalize_wire_message
+from app.ai.tools import (
+    ToolContext,
+    build_precheck_context,
+    execute_tool_calls,
+    normalize_wire_message,
+)
 from app.api.consent import (
     CHAT_ENDPOINT,
     CONSENT_TTL_SECONDS,
@@ -41,13 +47,20 @@ from app.api.validation import validate_prepare_body
 from app.config import (
     CONFIRMATION_TTL_SECONDS,
     ENGINE_VERSION,
+    MAX_BODY_BYTES,
     PREPARE_TTL_SECONDS,
     RULES_SCHEMA_VERSION,
     SUPPORTED_YEARS,
 )
 from app.core.errors import AppError
-from app.core.hashing import calculation_core_hash, canonical_json_bytes
-from app.web.coverage_data import coverage_items
+from app.core.hashing import (
+    bundle_content_hash,
+    calculation_core_hash,
+    canonical_json_bytes,
+    canonical_loads,
+)
+from app.rules import runtime as rules_runtime
+from app.web.coverage_data import chat_coverage_guidance, coverage_items
 from app.web.records import (
     REPLAY_MARKER,
     build_core,
@@ -67,16 +80,27 @@ EXECUTE_TARGETS: dict[str, str] = {
     "stamp_lease": "/api/v1/calc/stamp-duty/lease",
 }
 
+# S002 ADR-3：v2 输入（schema 2.0.0＋显式 AvailabilityContext）仅此两税
+_V2_TAX_TYPES = ("salaries_tax", "personal_assessment")
+
 
 def register_routes(app: Any, templates: Any) -> None:
+    # 共享同意存储（Annex 005 §12.1：middleware reservation 与 routes 共用同一
+    # ConsentStore 实例；create_app 装配时写入 app.state.consent_store）
+    consent_store = getattr(app.state, "consent_store", None) or ConsentStore()
+
     # ------------------------------------------------------------------ meta
     @app.get("/api/v1/meta/version")
-    async def meta_version() -> dict:
+    async def meta_version(request: Request) -> dict:
+        """版本表＋运行时 epoch/revision（S002 §4.1；不入 binding/core 哈希）。"""
+        registry, sid = _session(request)
         return {
             "name": "hktax-agent",
             "engine_version": ENGINE_VERSION,
             "rules_schema_version": RULES_SCHEMA_VERSION,
             "api_version": "v1",
+            "session_epoch": registry.session_epoch,
+            "input_revision": registry.current_input_revision(sid),
         }
 
     @app.get("/api/v1/meta/coverage")
@@ -99,32 +123,123 @@ def register_routes(app: Any, templates: Any) -> None:
     # ------------------------------------------------- prepare（C3.2.1）
     @app.post("/api/v1/calc/prepare")
     async def calc_prepare(request: Request) -> JSONResponse:
-        body = await _read_json(request)
-        tax_type, canonical_input = validate_prepare_body(body)
-        # REQ-17/18：规则可用性守卫（blocked 受影响期间拒算且不落 prepared；
-        # trusted_offline 降级 notice 并入 warnings；守卫只读状态，不写库）
-        offline_notice = _consult_availability(request, canonical_input)
+        """prepare：middleware 已完成唯一 reservation（If-Match CAS→rev++/
+        失效→声明大小检查）；本路由在有界读取/校验后，于同一 app-owned
+        store 写锁窗口内完成 pin→取束→guard→admission 单快照（G16/G17），
+        锁外运行恰一次语义预检引擎，保存前再 CAS→落 prepared（不再递增
+        revision）。"""
         registry, sid = _session(request)
-        binding = _full_binding(request)
+        reservation = getattr(request.state, "edit_reservation", None)
+        body = await _read_bounded_json(request)
+        tax_type, canonical_input = validate_prepare_body(body)
+        if reservation is None:
+            raise AppError(
+                "E_CONFIRMATION_STALE",
+                "编辑在途：本次 reservation 已非当前版本；请以 X-Edit-Current-* "
+                "只读快照显式重同步后重新 prepare",
+            )
+        store = request.app.state.store
+        guard = getattr(request.app.state, "update_scheduler", None)
+        # §4 prepare 单快照：pin→bundle→guard→admission 同一 store 写锁窗口内
+        #（锁内不运行引擎/网络；writer publish 不得穿过快照窗口）。
+        with store._write_lock:
+            binding = _full_binding(request)
+            content = store.get_bundle(binding["bundle_id"])
+            try:
+                recomputed = bundle_content_hash(content)
+            except (TypeError, ValueError) as exc:
+                raise AppError(
+                    "E_RULES_STATE_UNVERIFIABLE",
+                    "规则束内容形状损坏（无法复核哈希）；拒算（fail-closed）。",
+                ) from exc
+            if recomputed != binding["bundle_hash"]:
+                raise AppError(
+                    "E_RULES_STATE_UNVERIFIABLE",
+                    "规则束内容与已发布 bundle_hash 不符（载入损坏）；"
+                    "拒算（fail-closed）。",
+                )
+            guard_read = rules_runtime.read_guard(
+                guard, tax_type=tax_type, facts=canonical_input
+            )
+            admission = rules_runtime.admit_runtime(
+                binding,
+                content,
+                tax_type=tax_type,
+                facts=canonical_input,
+                guard_read=guard_read,
+            )
+        # 锁外：v2 两税语义预检（引擎恰一次；needs_input/blocked 在 prepare
+        # 即拒绝、无能力；结构/引用错误由校验/引擎抛出）。
+        if tax_type in _V2_TAX_TYPES:
+            result = run_engine(
+                tax_type,
+                copy.deepcopy(dict(canonical_input)),
+                copy.deepcopy(dict(content)),
+                availability=admission["availability_context"],
+            )
+            status = result.get("status")
+            if status == "needs_input":
+                questions = [
+                    question
+                    for question in (result.get("questions") or [])
+                    if isinstance(question, dict)
+                ]
+                field = questions[0].get("field") if questions else None
+                raise AppError(
+                    "E_ELIGIBILITY_UNKNOWN",
+                    "存在尚未确定的资格事实；请按定位补全后重新 prepare＋confirm。",
+                    field=field,
+                    binding=dict(binding),
+                    extra={"questions": questions, "status": "needs_input"},
+                )
+            if status == "blocked":
+                blocked_reason = str(
+                    result.get("blocked_reason") or "规则状态不可核验；拒算。"
+                )
+                raise AppError(
+                    "E_RULES_STATE_UNVERIFIABLE",
+                    blocked_reason,
+                    binding=dict(binding),
+                    extra={
+                        "status": "blocked",
+                        "blocked_reason": blocked_reason,
+                        "questions": [
+                            question
+                            for question in (result.get("questions") or [])
+                            if isinstance(question, dict)
+                        ],
+                    },
+                )
         input_hash = "sha256:" + hashlib.sha256(
             canonical_json_bytes(canonical_input)
         ).hexdigest()
         prepared_id = "p-" + secrets.token_hex(16)
-        input_revision = registry.next_input_revision(sid)
-        registry.save_prepared(
+        input_revision = int(reservation["input_revision"])
+        # §12.1 末行＋R2：保存前再 CAS 与保存同一临界区（body 读取期间另一
+        # 编辑推进 → 409 stale、不落 prepared）。
+        if not registry.save_prepared_if_current(
             sid,
             {
                 "prepared_id": prepared_id,
                 "tax_type": tax_type,
-                "input": canonical_input,
+                "schema_version": str(body["schema_version"]),
+                "input": copy.deepcopy(canonical_input),
                 "input_hash": input_hash,
                 "input_revision": input_revision,
-                "binding": binding,
+                "binding": copy.deepcopy(binding),
+                "session_epoch": reservation["session_epoch"],
                 "execute_target": EXECUTE_TARGETS[tax_type],
                 "created_at": time.monotonic(),
                 "ttl": PREPARE_TTL_SECONDS,
             },
-        )
+            reservation["session_epoch"],
+            reservation["input_revision"],
+        ):
+            raise AppError(
+                "E_CONFIRMATION_STALE",
+                "编辑在途：本次 reservation 已非当前版本；请以 X-Edit-Current-* "
+                "只读快照显式重同步后重新 prepare",
+            )
         payload: dict[str, Any] = {
             "prepared_id": prepared_id,
             "input_revision": input_revision,
@@ -139,18 +254,70 @@ def register_routes(app: Any, templates: Any) -> None:
             "status": "prepared",
         }
         # REQ-2：2026/27 未完结提示（仅直接税年度键；印花税按文书日期窗口）
-        # ＋REQ-18：trusted_offline 离线 notice（mode=ok 不添加任何提示）
+        # ＋REQ-18：guard admission 的离线固定模板提示（ok 不添加任何提示）
         warnings: list[str] = []
         if canonical_input.get("year_of_assessment") == "2026_27":
             warnings.append(
                 "2026/27 课税年度尚未完结：结果按已确认规则快照计算，"
                 "后续法例或官方指引可能调整。"
             )
-        if offline_notice:
-            warnings.append(offline_notice)
+        warnings.extend(admission.get("warnings") or [])
         if warnings:
             payload["warnings"] = warnings
         return JSONResponse(status_code=201, content=payload)
+
+    # ------------------------------------------------- invalidate（§12.3）
+    @app.post("/api/v1/calc/invalidate")
+    async def calc_invalidate(request: Request) -> JSONResponse:
+        """显式失效（CAS）：rev++、删除旧 prepared、未消费 confirm 失效、
+        records 保留；CAS 失败 409（附 Current 只读快照）。"""
+        body = await _read_json(request)
+        if not isinstance(body, dict):
+            raise AppError("E_INPUT_TYPE", "请求体必须是 JSON 对象", field="body")
+        # §12.3/R3⑧：invalidate 请求体闭合两键（extra → 结构化拒绝、不推进）
+        _INVALIDATE_KEYS = ("expected_session_epoch", "expected_input_revision")
+        _invalidate_extras = [key for key in body if key not in _INVALIDATE_KEYS]
+        if _invalidate_extras:
+            raise AppError(
+                "E_INPUT_EXTRA",
+                f"invalidate 请求含未知字段：{_invalidate_extras[0]}（仅受理"
+                " expected_session_epoch／expected_input_revision）",
+                field=_invalidate_extras[0],
+            )
+        expected_epoch = body.get("expected_session_epoch")
+        expected_revision = body.get("expected_input_revision")
+        for name, value in (
+            ("expected_session_epoch", expected_epoch),
+            ("expected_input_revision", expected_revision),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise AppError(
+                    "E_INPUT_TYPE", f"{name} 必须为整数", field=name
+                )
+        registry, sid = _session(request)
+        outcome = registry.invalidate(
+            sid,
+            expected_epoch,
+            expected_revision,
+            consent_store=consent_store,
+        )
+        if outcome is None:
+            raise AppError(
+                "E_CONFIRMATION_STALE",
+                "会话版本不符（CAS 失败）；请以 X-Edit-Current-* 只读快照重同步",
+            )
+        request.state.edit_ack = {
+            "session_epoch": outcome["session_epoch"],
+            "input_revision": outcome["input_revision"],
+        }
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "invalidated",
+                "session_epoch": outcome["session_epoch"],
+                "input_revision": outcome["input_revision"],
+            },
+        )
 
     # ------------------------------------------------- confirm（C3.2.2）
     @app.post("/api/v1/calc/confirm")
@@ -167,42 +334,19 @@ def register_routes(app: Any, templates: Any) -> None:
                 "必须显式确认（acknowledge=true）才能生成执行能力",
             )
         registry, sid = _session(request)
-        prepared = registry.get_prepared(sid, str(body["prepared_id"]))
-        if prepared is None:
-            raise AppError(
-                "E_CONFIRMATION_REQUIRED",
-                "prepared 记录不存在；请重新 prepare",
-            )
-        if time.monotonic() - prepared["created_at"] > prepared["ttl"]:
-            registry.drop_prepared(sid, prepared["prepared_id"])
-            raise AppError("E_CONFIRMATION_STALE", "prepared 已过期；请重新 prepare")
-        if (
-            body["canonical_input_hash"] != prepared["input_hash"]
-            or body["expected_binding"] != prepared["binding"]
-        ):
-            raise AppError(
-                "E_CONFIRMATION_STALE",
-                "输入或规则绑定已变化；请重新 prepare",
-            )
-        confirmation_id = "c-" + secrets.token_hex(32)  # 256-bit 可执行确认能力
-        registry.save_confirmation(
+        # §12.3＋R2/A2：registry→store 临界区内原子核对 prepared 身份并在同一
+        # 临界区重读当前 binding 后签发能力（指针窗口内切换 → 不发能力）。
+        confirmation = registry.issue_confirmation(
             sid,
-            {
-                "confirmation_id": confirmation_id,
-                "prepared_id": prepared["prepared_id"],
-                "tax_type": prepared["tax_type"],
-                "input_hash": prepared["input_hash"],
-                "input_revision": prepared.get("input_revision"),
-                "binding": prepared["binding"],
-                "execute_target": prepared["execute_target"],
-                "session_epoch": registry.session_epoch,
-                "created_at": time.monotonic(),
-                "ttl": CONFIRMATION_TTL_SECONDS,
-                "consumed": False,
-                "record_id": None,
-            },
+            str(body["prepared_id"]),
+            body["canonical_input_hash"],
+            body["expected_binding"],
+            store=request.app.state.store,
         )
-        return {"confirmation_id": confirmation_id, "expires_in": CONFIRMATION_TTL_SECONDS}
+        return {
+            "confirmation_id": confirmation["confirmation_id"],
+            "expires_in": CONFIRMATION_TTL_SECONDS,
+        }
 
     # ------------------------------------------------- execute（C3.2.3）
     def _register_execute(target: str) -> None:
@@ -221,76 +365,97 @@ def register_routes(app: Any, templates: Any) -> None:
                     "E_CONFIRMATION_REQUIRED",
                     "确认能力不存在；请先 prepare＋confirm",
                 )
+            # stale 墓碑（invalidate/clear 后）优先于已消费链接返回（§12.3：
+            # clear 后旧 token 不返回旧链接）
+            if confirmation.get("stale"):
+                raise AppError(
+                    "E_CONFIRMATION_STALE",
+                    "确认能力已失效；请重新 prepare＋confirm",
+                )
             # 错目标 → 409 且不消费（C3.2.2/C3.2.3）
             if confirmation["execute_target"] != target:
                 raise AppError(
                     "E_CONFIRMATION_TARGET_MISMATCH",
                     "请从发起确认的同一税项入口执行",
                 )
+            # 重复请求仍以 registry 权威作答（B8：锁外 peek 副本不得返回旧
+            # 链接；clear/失效后 → stale，无旧 record 链接）
             if confirmation.get("consumed"):
+                consumption = registry.get_consumption(sid, confirmation_id)
+                if consumption is None or consumption.get("stale"):
+                    raise AppError(
+                        "E_CONFIRMATION_STALE",
+                        "确认能力已失效；请重新 prepare＋confirm",
+                    )
                 consumed_error = AppError(
                     "E_CONFIRMATION_CONSUMED", "该确认已使用（无双重计算）"
                 )
-                if confirmation.get("record_id"):
-                    consumed_error.extra["record_id"] = confirmation["record_id"]
+                if consumption.get("record_id"):
+                    consumed_error.extra["record_id"] = consumption["record_id"]
                 raise consumed_error
-            if (
-                registry.session_epoch != confirmation["session_epoch"]
-                or time.monotonic() - confirmation["created_at"] > confirmation["ttl"]
-            ):
-                raise AppError(
-                    "E_CONFIRMATION_STALE",
-                    "确认能力已失效；请重新 prepare＋confirm",
-                )
-            # C3.2.4：input_revision 变化（用户编辑输入）→ 未消费确认失效
-            if confirmation.get("input_revision") != registry.current_input_revision(sid):
-                raise AppError(
-                    "E_CONFIRMATION_STALE",
-                    "输入已修订（input_revision 变化）；请重新 prepare＋confirm",
-                )
-            # C3.2.4：rules 变化（bundle/engine 四元组任一字段变化）→ 失效
-            if confirmation["binding"] != _full_binding(request):
-                raise AppError(
-                    "E_CONFIRMATION_STALE",
-                    "规则绑定已变化（bundle/engine）；请重新 prepare＋confirm",
-                )
-            # REQ-17/18：规则可用性守卫（blocked 受影响期间拒算且不消费确认
-            # 能力，状态核验恢复后同一确认仍可执行；trusted_offline 降级
-            # notice 并入响应 warnings；守卫只读状态，不写库）
-            facts = _prepared_input(registry, sid, confirmation)
-            offline_notice = _consult_availability(request, facts)
-            if not registry.mark_consumed(sid, confirmation_id):
-                consumed_error = AppError(
-                    "E_CONFIRMATION_CONSUMED", "该确认已使用（无双重计算）"
-                )
-                if confirmation.get("record_id"):
-                    consumed_error.extra["record_id"] = confirmation["record_id"]
-                raise consumed_error
-
-            # 引擎执行（app/engines/* 纯函数；规则束按确认 binding 精确载入）
-            store = request.app.state.store
-            bundle = store.get_bundle(confirmation["binding"]["bundle_id"])
-            result = run_engine(confirmation["tax_type"], facts, bundle)
-            core = build_core(
-                confirmation["tax_type"], facts, confirmation["binding"], result, bundle
+            # §12.3：registry→store 同一临界区重取指针/束、重查 current＋next
+            # guard 并完整冻结后才消费；锁内不运行引擎/网络。
+            context = registry.consume_for_execution(
+                sid,
+                confirmation_id,
+                target=target,
+                store=request.app.state.store,
+                guard=getattr(request.app.state, "update_scheduler", None),
             )
-            record_id = "r-" + secrets.token_hex(12)
-            confirmation["record_id"] = record_id
-            registry.save_record(sid, {"record_id": record_id, "core": core})
-            # REQ-18：trusted_offline 降级 notice 仅并入响应 warnings（不入
-            # 存档 core/core_hash；ok 时无 notice，warnings 与 core 一致）
-            warnings = list(core["warnings"] or [])
-            if offline_notice:
-                warnings.append(offline_notice)
+            consumption = registry.get_consumption(sid, confirmation_id)
+            frozen_warnings = list((consumption or {}).get("warnings") or [])
+            tax_type = context["tax_type"]
+            # 引擎/core 只从冻结快照独立解码（C10/C12：工作副本污染不影响
+            # 记录证据；消费后禁止 get_prepared/get_bundle 数值重取）。
+            facts = canonical_loads(context["canonical_input_bytes"])
+            bundle = canonical_loads(context["verified_bundle_bytes"])
+            try:
+                result = run_engine(
+                    tax_type,
+                    copy.deepcopy(facts),
+                    copy.deepcopy(bundle),
+                    availability=context["availability_context"],
+                )
+                core = build_core(
+                    tax_type,
+                    facts,
+                    context["binding"],
+                    result,
+                    bundle,
+                )
+            except AppError as exc:
+                registry.fail_execution(context, exc.code)
+                raise
+            except Exception:
+                # 普通程序异常同样进入 failed 终态（P4）；对外安全 500 由
+                # SecurityMiddleware 兜底（脱敏/ACK/no-store）。
+                registry.fail_execution(context, "E_INTERNAL")
+                raise
+            # §12.3：原子完成；clear/epoch/deadline → discarded（无 record/链接）
+            receipt = registry.complete_execution(
+                context,
+                core,
+                store=request.app.state.store,
+                guard=getattr(request.app.state, "update_scheduler", None),
+            )
+            if receipt["outcome"] == "discarded":
+                raise AppError(
+                    "E_CONFIRMATION_STALE",
+                    "会话已清空或授权已到期；本次执行已丢弃（不写记录、"
+                    "不返回旧税额）",
+                )
+            # REQ-18：消费时冻结的离线模板提示并入响应 warnings（不得被
+            # completion 期 notice 改写；不入 core/core_hash）
+            warnings = list(core["warnings"] or []) + frozen_warnings
             return JSONResponse(
                 status_code=200,
                 content={
-                    "record_id": record_id,
+                    "record_id": receipt["record_id"],
                     "status": core["status"],
                     "binding": core["binding"],
                     "amounts": core["amounts"],
                     "blocked_reason": core["blocked_reason"],
-                    "core_hash": calculation_core_hash(core),
+                    "core_hash": receipt["core_hash"],
                     "steps": core["steps"],
                     "evidence_refs": core["evidence_refs"],
                     "unsupported": core["unsupported"],
@@ -309,8 +474,9 @@ def register_routes(app: Any, templates: Any) -> None:
     # ------------------------------------------------------------------ records
     @app.post("/api/v1/records/replay")
     async def records_replay(request: Request) -> JSONResponse:
-        """原包重放（C3.1 replay 行）：按确认事实＋原 binding 校验后重算；
-        标「历史估算，非当前重新评估」；不改写原记录。"""
+        """原包重放（C3.1 replay 行；005 §2.2）：先完成 engine/hash/schema/
+        固定 profile 兼容检查，再经可信 provider 取「原 binding/原 bundle＋
+        当前 guard」的两税 AvailabilityContext；不改写原记录。"""
         body = await _read_json(request)
         record_id = body.get("record_id") if isinstance(body, dict) else None
         registry, sid = _session(request)
@@ -318,7 +484,39 @@ def register_routes(app: Any, templates: Any) -> None:
         if record is None:
             raise StarletteHTTPException(status_code=404, detail="record not found")
         core = record["core"]
-        result = recompute_for_replay(core, request.app.state.store, ENGINE_VERSION)
+
+        def availability_provider(
+            tax_type: str, facts: Any, binding: Any, bundle: Any
+        ) -> dict:
+            """可信来源：当前 app-owned guard 对原 bundle 目标年度准入。
+
+            005:62/:66：binding 恒为 record 原四元组（不 pin_current）；guard
+            缺失/畸形/unknown/blocked → admit_runtime 抛 422 语义错误。
+            005:71：trusted_offline 等 admission warnings 原样转交 replay 结果。
+            """
+            guard = getattr(request.app.state, "update_scheduler", None)
+            guard_read = rules_runtime.read_guard(
+                guard, tax_type=tax_type, facts=facts
+            )
+            admission = rules_runtime.admit_runtime(
+                binding,
+                bundle,
+                tax_type=tax_type,
+                facts=facts,
+                guard_read=guard_read,
+            )
+            return {
+                "availability_context": admission["availability_context"],
+                "warnings": list(admission.get("warnings") or []),
+            }
+
+        result = recompute_for_replay(
+            core,
+            request.app.state.store,
+            ENGINE_VERSION,
+            availability_provider=availability_provider,
+            guard=getattr(request.app.state, "update_scheduler", None),
+        )
         return JSONResponse(
             status_code=200,
             content={
@@ -376,8 +574,6 @@ def register_routes(app: Any, templates: Any) -> None:
         )
 
     # ------------------------------------------------- AI consent（C4.5–C4.8）
-    consent_store = ConsentStore()
-
     @app.post("/api/v1/ai/consent/preview")
     async def ai_consent_preview(request: Request) -> JSONResponse:
         """外发预览：白名单负载 → 一次 serialize 冻结字节 → 完整预览＋
@@ -541,6 +737,13 @@ def register_routes(app: Any, templates: Any) -> None:
         if not config["upstream_endpoint"] or not config["api_key"]:
             # C3.7：AI 尚未配置 → 409（本地计算可用；授权保留待配置后使用）
             raise AppError("E_MODEL_UNCONFIGURED", "AI 尚未配置；本地计算可用")
+        # 005:698：外发前的本轮版本快照（出站返回后、处理 tool_calls 前重核）
+        round_epoch = registry.session_epoch
+        round_revision = registry.current_input_revision(sid)
+        # C5.4：撤回已 consumed 授权不回滚状态、只 bump consent_epoch——故
+        # 本轮必须同时冻结 consent_epoch，出站后比较；否则撤回后的迟到响应
+        # 仍会执行工具（审计负例）。
+        round_consent_epoch = registry.consent_epoch
         # ⑥发送前原子消费（consumed 终态，不可回滚）→ ⑦经接缝原样发送冻结字节
         consent_store.transition(sid, consent_id, "consumed")
         raw = dispatch_outbound(
@@ -549,6 +752,26 @@ def register_routes(app: Any, templates: Any) -> None:
             config["api_key"],
             item["frozen_bytes"],
         )
+        # 005:698：迟到响应整轮丢弃——epoch/revision/consent/consent_epoch 任一
+        # 已变即不执行任何工具（无 executed 条目、无记录、不消费任何确认）。
+        current_consent = consent_store.get(sid, consent_id)
+        if (
+            registry.session_epoch != round_epoch
+            or registry.current_input_revision(sid) != round_revision
+            or registry.consent_epoch != round_consent_epoch
+            or current_consent is None
+            or current_consent.get("status") != "consumed"
+        ):
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "consent_id": consent_id,
+                    "sent_bytes": len(item["frozen_bytes"]),
+                    "status": "discarded",
+                    "content": None,
+                    "unconfirmed": True,
+                },
+            )
         message = normalize_wire_message(raw["body"])
         response_payload: dict[str, Any] = {
             "consent_id": consent_id,
@@ -559,9 +782,24 @@ def register_routes(app: Any, templates: Any) -> None:
             "unconfirmed": True,
         }
         if message["tool_calls"]:
-            # C3.6 工具层：封闭注册表＋strict 参数＋确认门控（不绕过三段确认）
+            # C3.6 工具层：封闭注册表＋strict 参数＋确认门控（不绕过三段确认）；
+            # 005:912：同一 guard 快照＋本轮 prepared 四元组/current-next 预检。
+            guard = getattr(request.app.state, "update_scheduler", None)
+            binding = _full_binding(request)
             ctx = ToolContext(
-                registry, sid, request.app.state.store, _full_binding(request)
+                registry,
+                sid,
+                request.app.state.store,
+                binding,
+                guard=guard,
+                availability_context=build_precheck_context(
+                    registry, sid, guard, binding
+                ),
+                pinned_bundle=request.app.state.store.get_bundle(
+                    binding["bundle_id"]
+                ),
+                session_epoch=registry.session_epoch,
+                input_revision=registry.current_input_revision(sid),
             )
             response_payload["tool_results"] = execute_tool_calls(
                 message["tool_calls"], ctx
@@ -610,14 +848,43 @@ def register_routes(app: Any, templates: Any) -> None:
     # ------------------------------------------------------------------ session
     @app.delete("/api/v1/session")
     async def session_clear(request: Request) -> dict:
+        """clear＝epoch+1、input_revision=0 的 epoch 边界（非 reservation）；
+        ACK 由本操作结果直出（不靠事后 current 查询）；同操作真删除该 sid 的
+        全部 AI consent 状态与冻结负载（R2/Bu2：删除非失效）。"""
         registry, sid = _session(request)
-        epochs = registry.clear_session(sid)
+        epochs = registry.clear_session(sid, consent_store=consent_store)
+        request.state.edit_ack = {
+            "session_epoch": epochs["session_epoch"],
+            "input_revision": 0,
+        }
         return {"status": "cleared", **epochs}
 
     # ------------------------------------------------------------------ pages
     @app.get("/")
     async def index_page(request: Request) -> Any:
-        return templates.TemplateResponse(request=request, name="index.html", context={})
+        # 005:927/004:138：coverage_items() 恰调用一次；同一本地视图传入聊天
+        # 面板（确定性本地指引，非模型文本；视觉完整链留 W3）。
+        items = coverage_items()
+        guidance = chat_coverage_guidance(items)
+        view_json = json.dumps(
+            {"items": items, "guidance": guidance},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        view_json = (
+            view_json.replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={
+                "coverage_items": items,
+                "coverage_guidance": guidance,
+                "coverage_view_json": view_json,
+            },
+        )
 
     @app.get("/coverage")
     async def coverage_page(request: Request) -> Any:
@@ -712,71 +979,28 @@ def _full_binding(request: Request) -> dict[str, str]:
     }
 
 
-def _prepared_input(registry: Any, sid: str | None, confirmation: dict) -> dict:
-    prepared = registry.get_prepared(sid, confirmation.get("prepared_id", ""))
-    return prepared["input"] if prepared is not None else {}
+async def _read_bounded_json(request: Request) -> Any:
+    """§12.1 有界读取：累计 >1MB 即 413（超限 chunk 不入聚合 buffer）。
 
-
-def _availability_guard(request: Request) -> Any | None:
-    """REQ-17/18 可用性守卫接缝：返回 update_scheduler.availability；
-    调度器缺席或假件无 availability 契约 → None（守卫跳过，不破坏既有流程）。"""
-    scheduler = getattr(request.app.state, "update_scheduler", None)
-    availability = getattr(scheduler, "availability", None)
-    return availability if callable(availability) else None
-
-
-def _availability_period(facts: Any) -> str | None:
-    """守卫期间键：直接税取 year_of_assessment（YYYY_YY）；印花税由
-    instrument_date 映射课税年度（4 月 1 日起始）；两者皆缺 → None（不守卫）。"""
-    if not isinstance(facts, dict):
-        return None
-    year = facts.get("year_of_assessment")
-    if isinstance(year, str) and year:
-        return year
-    instrument_date = facts.get("instrument_date")
-    if isinstance(instrument_date, str) and len(instrument_date) >= 7:
-        try:
-            year_part = int(instrument_date[0:4])
-            month_part = int(instrument_date[5:7])
-        except ValueError:
-            return None
-        if not (1 <= month_part <= 12):
-            return None
-        start = year_part if month_part >= 4 else year_part - 1
-        return f"{start}_{(start + 1) % 100:02d}"
-    return None
-
-
-def _consult_availability(request: Request, facts: Any) -> str | None:
-    """咨询 update_scheduler.availability(period)（REQ-17/18；只读态不写库）：
-
-    - blocked（已知变更/过期/回滚受影响期间）→ E_RULES_STATE_UNVERIFIABLE
-      拒算（C3.7 → 422），不输出任何税额；
-    - trusted_offline（离线但最近已核验快照在档）→ 返回中文降级 notice，由
-      调用方并入响应 warnings（REQ-18 降级行：可算但必须告知）；
-    - ok／守卫缺席／期间不可得 → None（不添加任何 notice）。
+    C2.7/R3⑦：JSON 解析复用 canonical_loads（解析期拒绝重复键）。
     """
-    availability = _availability_guard(request)
-    if availability is None:
-        return None
-    period = _availability_period(facts)
-    if period is None:
-        return None
-    verdict = availability(period)
-    if not isinstance(verdict, dict):
-        return None
-    mode = verdict.get("mode")
-    notice = verdict.get("notice")
-    if mode == "blocked":
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > MAX_BODY_BYTES:
+            raise AppError(
+                "E_INPUT_OVERSIZE", "请求体超过 1MB 上限（C2.9）", field="body"
+            )
+        chunks.append(bytes(chunk))
+    raw = b"".join(chunks)
+    try:
+        return canonical_loads(raw.decode("utf-8"))
+    except Exception:
         raise AppError(
-            "E_RULES_STATE_UNVERIFIABLE",
-            notice
-            if isinstance(notice, str) and notice
-            else (
-                f"课税年度 {period} 存在已知未核实的法律状态；受影响期间的"
-                "现行计算已拒绝，不自动推定生效或失效，待独立核验并发布后恢复。"
-            ),
-        )
-    if mode == "trusted_offline" and isinstance(notice, str) and notice:
-        return notice
-    return None
+            "E_INPUT_TYPE",
+            "请求体不是合法 JSON（或含重复键；C2.7 canonical 拒绝重复键）",
+            field="body",
+        ) from None

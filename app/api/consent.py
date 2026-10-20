@@ -40,6 +40,13 @@ MODEL_API_KEY_ENV = "HKTAX_MODEL_API_KEY"
 CHAT_ENDPOINT = "/api/v1/ai/chat"
 WIRE_PROFILE = "openai-compatible-chat-completions"
 
+# C4.8 有限状态表：仅下列转移合法（终态 consumed/revoked/expired/stale 无
+# 出边；未列出转移＝非法 → E_CONSENT_STALE，不得复活/重发）。
+_CONSENT_TRANSITIONS: dict[str, frozenset[str]] = {
+    "prepared": frozenset({"granted", "revoked", "expired", "stale"}),
+    "granted": frozenset({"consumed", "revoked", "expired", "stale"}),
+}
+
 
 def model_config() -> dict[str, Any]:
     """读取模型端点配置（无密钥/端点 → 未配置；C3.7 E_MODEL_UNCONFIGURED）。"""
@@ -132,14 +139,50 @@ class ConsentStore:
 
     def transition(
         self, sid: str | None, consent_id: str, status: str
-    ) -> dict[str, Any] | None:
-        """C4.8 状态转移（granted/revoked/stale/expired/consumed）。"""
+    ) -> dict[str, Any]:
+        """C4.8 状态转移（有限状态表；grant/chat/revoke 不得忽略失败）。
+
+        - prepared→granted；granted→consumed；prepared/granted→
+          revoked/expired/stale；终态（consumed/revoked/expired/stale）无出边；
+        - 无条目 → E_CONSENT_REQUIRED（403）；非法/终态转移（含 consumed→
+          再次 consumed）→ E_CONSENT_STALE（409）；成功返回条目副本。
+        """
         with self._lock:
             item = self._items.get((sid or "", consent_id))
             if item is None:
-                return None
+                raise AppError(
+                    "E_CONSENT_REQUIRED", "同意不存在；请重新预览并授权"
+                )
+            if status not in _CONSENT_TRANSITIONS.get(
+                item.get("status"), frozenset()
+            ):
+                raise AppError(
+                    "E_CONSENT_STALE",
+                    f"非法状态转移（{item.get('status')} → {status}）；"
+                    "请重新预览并授权",
+                )
             item["status"] = status
             return dict(item)
+
+    def invalidate_session(self, sid: str | None) -> None:
+        """Annex 005 §12.1：prepare reservation/invalidate 使该 sid 的
+        prepared/granted 未消费同意失效（stale；不删条目、不恢复 granted）。"""
+        with self._lock:
+            for (item_sid, _consent_id), item in self._items.items():
+                if item_sid == (sid or "") and item.get("status") in (
+                    "prepared",
+                    "granted",
+                ):
+                    item["status"] = "stale"
+
+    def delete_session(self, sid: str | None) -> None:
+        """Annex 005 §12.3 clear：真删除该 sid **全部** consent 条目（含
+        messages/frozen_bytes 冻结负载），不保留墓碑；invalidate ≠ delete。"""
+        key_sid = sid or ""
+        with self._lock:
+            stale_keys = [key for key in self._items if key[0] == key_sid]
+            for key in stale_keys:
+                del self._items[key]
 
     def _prune_expired_locked(self) -> None:
         now = time.monotonic()

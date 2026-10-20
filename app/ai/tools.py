@@ -23,12 +23,21 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
-import secrets
-import time
+from collections.abc import Mapping
 from typing import Any
 
+from app.api.validation import validate_prepare_body
 from app.core.errors import AppError
+from app.core.hashing import (
+    bundle_content_hash,
+    canonical_json_bytes,
+    canonical_loads,
+)
+from app.rules import runtime as rules_runtime
+from app.rules.admission import verify_fixed_profile
 from app.web.records import build_core, run_engine
 
 # C3.6 封闭工具注册表
@@ -174,13 +183,84 @@ def normalize_wire_message(body: bytes) -> dict[str, Any]:
 
 # ------------------------------------------------------------------ 工具执行
 class ToolContext:
-    """工具层执行上下文（会话内存＋规则存储＋当前绑定；由 chat 路由注入）。"""
+    """工具层执行上下文（会话内存＋规则存储＋pinned 绑定＋只读 precheck）。
 
-    def __init__(self, registry: Any, sid: str | None, store: Any, binding: dict) -> None:
+    005:912：`guard` 为本轮 `app.state.update_scheduler` 快照（与 HTTP 共用
+    同一对象）；`availability_context` 为本轮 prepared 四元组 binding＋
+    current/next AvailabilityContext 的预检快照（只读；不构成确认/授权）。
+    """
+
+    def __init__(
+        self,
+        registry: Any,
+        sid: str | None,
+        store: Any,
+        binding: dict,
+        *,
+        guard: Any = None,
+        availability_context: Any = None,
+        pinned_bundle: Any = None,
+        session_epoch: int | None = None,
+        input_revision: int | None = None,
+    ) -> None:
         self.registry = registry
         self.sid = sid
         self.store = store
         self.binding = binding
+        self.guard = guard
+        self.availability_context = (
+            copy.deepcopy(availability_context)
+            if availability_context is not None
+            else {}
+        )
+        # 005:912：pinned bundle 与调用开始 epoch/revision 同属只读 precheck
+        # context；不构成 prepare/确认能力。
+        self.pinned_bundle = (
+            copy.deepcopy(pinned_bundle)
+            if pinned_bundle is not None
+            else None
+        )
+        self.session_epoch = session_epoch
+        self.input_revision = input_revision
+
+
+def build_precheck_context(
+    registry: Any, sid: str | None, guard: Any, binding: dict
+) -> dict[str, Any]:
+    """005:912：由当前 prepared 快照＋可信 guard 构造只读 precheck context。
+
+    - binding 取本轮 prepared 的四元组（无 prepared 时退回当前 pinned 绑定）；
+    - current/next 为 guard 按期间表的规范化判定；guard 缺失/畸形/不可核验
+      时仅保留 binding（预检不构成放行，实际执行仍经 consume_for_execution）。
+    """
+    prepared = None
+    reader = getattr(registry, "current_prepared", None)
+    if callable(reader):
+        prepared = reader(sid)
+    resolved_binding = (
+        prepared.get("binding") if isinstance(prepared, dict) else None
+    )
+    context: dict[str, Any] = {
+        "binding": copy.deepcopy(dict(resolved_binding or binding)),
+        "current": None,
+        "next": None,
+    }
+    if not isinstance(prepared, dict):
+        return context
+    tax_type = prepared.get("tax_type")
+    facts = prepared.get("input")
+    if not isinstance(tax_type, str) or not isinstance(facts, dict):
+        return context
+    try:
+        guard_read = rules_runtime.read_guard(guard, tax_type=tax_type, facts=facts)
+    except AppError:
+        return context
+    periods = list(guard_read.get("periods") or [])
+    if periods:
+        context["current"] = periods[0]
+    if len(periods) > 1:
+        context["next"] = periods[1]
+    return context
 
 
 def _entry(
@@ -205,10 +285,48 @@ def _entry(
     }
 
 
-def _rejected(call: dict, code: str, message_zh: str) -> dict[str, Any]:
-    """拒绝该调用（无部分执行；result 恒为 None）。"""
+def _rejected(
+    call: dict,
+    code: str,
+    message_zh: str,
+    *,
+    field: str | None = None,
+    details: list | None = None,
+    binding: dict | None = None,
+    status: str | None = None,
+    questions: list | None = None,
+    blocked_reason: str | None = None,
+) -> dict[str, Any]:
+    """拒绝该调用（005:916 恰八键 error；无部分执行，result 恒 None）。"""
     return _entry(
-        call, outcome="rejected", error={"code": code, "message_zh": message_zh}
+        call,
+        outcome="rejected",
+        error={
+            "code": code,
+            "message_zh": message_zh,
+            "field": field,
+            "details": list(details or []),
+            "binding": binding,
+            "status": status,
+            "questions": list(questions or []),
+            "blocked_reason": blocked_reason,
+        },
+    )
+
+
+def _rejected_from_app_error(call: dict, exc: AppError) -> dict[str, Any]:
+    """AppError → 005:916（保留精确字段；extra 中的状态/问题/阻断原因）。"""
+    extra = exc.extra or {}
+    return _rejected(
+        call,
+        exc.code,
+        exc.message_zh,
+        field=exc.field,
+        details=exc.details,
+        binding=exc.binding,
+        status=extra.get("status"),
+        questions=extra.get("questions") or [],
+        blocked_reason=extra.get("blocked_reason"),
     )
 
 
@@ -235,6 +353,117 @@ def execute_tool_calls(calls: list[dict], ctx: ToolContext) -> list[dict[str, An
     return [_execute_single(call, ctx) for call in calls]
 
 
+def _precheck_read_only(arguments: dict, ctx: ToolContext) -> dict[str, Any]:
+    """005:911–912：propose_input／validate_input 的 HTTP 同源只读语义预检。
+
+    - `input` **只接受完整 HTTP 业务信封**（`tax_type/schema_version/input`）；
+      裸 facts、`{}` 及任意缺信封键的输入一律 rejected（与 HTTP 同一校验器）。
+    - 完整信封使用 `validate_prepare_body`（税项/schema/事实结构）＋ pinned
+      bundle/hash ＋ guard admission ＋两税引擎预检；五税固定 profile 内容锚
+      同源核验。
+    - 不调用 prepare/invalidate、不创建任何确认/授权能力、不补默认资格。
+    """
+    envelope = arguments.get("input")
+    if not isinstance(envelope, Mapping):
+        raise AppError("E_INPUT_TYPE", "input 必须是 JSON 对象", field="input")
+    if (
+        ctx.session_epoch is not None
+        and ctx.registry.session_epoch != ctx.session_epoch
+    ) or (
+        ctx.input_revision is not None
+        and ctx.registry.current_input_revision(ctx.sid) != ctx.input_revision
+    ):
+        raise AppError(
+            "E_CONFIRMATION_STALE",
+            "调用的会话/输入版本已变化；提案已过期，请重新开始本轮",
+        )
+    tax_type, canonical_input = validate_prepare_body(dict(envelope))
+    binding = ctx.binding
+    bundle = ctx.pinned_bundle
+    if not isinstance(bundle, Mapping):
+        raise AppError(
+            "E_RULES_STATE_UNVERIFIABLE",
+            "预检缺少 pinned bundle；拒算（fail-closed）。",
+            field="bundle",
+        )
+    try:
+        actual_hash = bundle_content_hash(bundle)
+    except (TypeError, ValueError) as exc:
+        raise AppError(
+            "E_RULES_STATE_UNVERIFIABLE",
+            "pinned bundle 内容形状损坏（无法复核哈希）；拒算。",
+        ) from exc
+    if actual_hash != binding.get("bundle_hash"):
+        raise AppError(
+            "E_RULES_STATE_UNVERIFIABLE",
+            "pinned bundle 与四元组 binding 不符；拒算（fail-closed）。",
+            field="bundle_hash",
+        )
+    verify_fixed_profile(bundle, tax_type=tax_type)
+    guard_read = rules_runtime.read_guard(
+        ctx.guard, tax_type=tax_type, facts=canonical_input
+    )
+    admission = rules_runtime.admit_runtime(
+        binding,
+        bundle,
+        tax_type=tax_type,
+        facts=canonical_input,
+        guard_read=guard_read,
+    )
+    missing_components: list = []
+    if tax_type in ("salaries_tax", "personal_assessment"):
+        result = run_engine(
+            tax_type,
+            copy.deepcopy(dict(canonical_input)),
+            copy.deepcopy(dict(bundle)),
+            availability=admission["availability_context"],
+        )
+        status = result.get("status")
+        if status == "needs_input":
+            questions = [
+                question
+                for question in (result.get("questions") or [])
+                if isinstance(question, dict)
+            ]
+            field = questions[0].get("field") if questions else None
+            raise AppError(
+                "E_ELIGIBILITY_UNKNOWN",
+                "存在尚未确定的资格事实；提案不可视为已检查。",
+                field=field,
+                extra={"questions": questions, "status": "needs_input"},
+            )
+        if status == "blocked":
+            raise AppError(
+                "E_RULES_STATE_UNVERIFIABLE",
+                str(result.get("blocked_reason") or "规则状态不可核验；拒算。"),
+                field="availability",
+                extra={
+                    "status": "blocked",
+                    "blocked_reason": result.get("blocked_reason"),
+                    "questions": [
+                        question
+                        for question in (result.get("questions") or [])
+                        if isinstance(question, dict)
+                    ],
+                },
+            )
+        # 005:915：未来缺项只进 missing_components，不阻断已知本年提案。
+        missing_components = [
+            str(item) for item in (result.get("missing_components") or [])
+        ]
+    input_bytes = canonical_json_bytes(canonical_input)
+    return {
+        "tax_type": tax_type,
+        "schema_version": str(envelope["schema_version"]),
+        "input": canonical_input,
+        "canonical_input_hash": (
+            "sha256:" + hashlib.sha256(input_bytes).hexdigest()
+        ),
+        "expected_binding": copy.deepcopy(dict(binding)),
+        "missing_components": missing_components,
+    }
+
+
 def _execute_single(call: dict, ctx: ToolContext) -> dict[str, Any]:
     name = call["name"]
     if name not in TOOL_NAMES:
@@ -254,21 +483,49 @@ def _execute_single(call: dict, ctx: ToolContext) -> dict[str, Any]:
     if name == "calculate_confirmed":
         return _run_calculate_confirmed(call, arguments, ctx)
     # propose_input / validate_input：只读（不产生任何确认/授权权威，C3.6）
-    key = "proposed_input" if name == "propose_input" else "checked_input"
+    try:
+        precheck = _precheck_read_only(arguments, ctx)
+    except AppError as exc:
+        return _rejected_from_app_error(call, exc)
     return _entry(
         call,
         outcome="executed",
+        note="read_only_checked",
         result={
-            key: arguments["input"],
-            "note": "只读；不产生任何确认或授权权威（C3.6）",
+            "proposal": {
+                "tax_type": precheck["tax_type"],
+                "schema_version": precheck["schema_version"],
+                "input": precheck["input"],
+            },
+            "canonical_input_hash": precheck["canonical_input_hash"],
+            "expected_binding": precheck["expected_binding"],
+            "status": "checked",
+            "questions": [],
+            "missing_components": list(precheck["missing_components"]),
         },
     )
+
+
+def _read_result_steps(steps: Any) -> list[dict]:
+    """005:919：AI read_result 仅选 scenario/selection/next_year 三类原条目。
+
+    旧无 tag 记录（无 kind）→ []；不重建/不读取 raw input/decision。
+    """
+    selected: list[dict] = []
+    for step in steps or []:
+        if isinstance(step, Mapping) and step.get("kind") in (
+            "scenario",
+            "selection",
+            "next_year",
+        ):
+            selected.append(copy.deepcopy(dict(step)))
+    return selected
 
 
 def _run_read_result(
     call: dict, arguments: dict, ctx: ToolContext
 ) -> dict[str, Any]:
-    """read_result：本会话已完成记录的权威金额（金额仅来自服务器记录）。"""
+    """read_result：005:919 本地最小保存结果（金额仅来自服务器记录）。"""
     record = ctx.registry.get_record(ctx.sid, arguments["record_id"])
     if record is None:
         return _rejected(
@@ -280,8 +537,15 @@ def _run_read_result(
         outcome="executed",
         result={
             "record_id": record["record_id"],
+            "tax_type": core.get("tax_type"),
+            "binding": dict(core.get("binding") or {}),
             "status": core.get("status"),
             "amounts": dict(core.get("amounts") or {}),
+            "blocked_reason": core.get("blocked_reason"),
+            "missing_components": list(core.get("missing_components") or []),
+            "unsupported": list(core.get("unsupported") or []),
+            "pending_verification": list(core.get("pending_verification") or []),
+            "steps": _read_result_steps(core.get("steps")),
         },
     )
 
@@ -289,8 +553,9 @@ def _run_read_result(
 def _run_calculate_confirmed(
     call: dict, arguments: dict, ctx: ToolContext
 ) -> dict[str, Any]:
-    """calculate_confirmed：仅引用服务器已存在的确认能力（C3.2.2/C3.2.3 同构
-    校验阶梯；错目标不消费；伪造/缺失确认 → E_CONFIRMATION_REQUIRED）。"""
+    """calculate_confirmed：与 HTTP 共用 §12.3 consume/complete/fail 原子语义
+    （005:690/:913）。消费前任何失败均不消费；消费后只从 ExecutionContext
+    快照解码执行，不再 get_prepared/重读 current bundle。"""
     registry = ctx.registry
     confirmation = registry.peek_confirmation(
         ctx.sid, arguments["confirmation_id"]
@@ -301,50 +566,62 @@ def _run_calculate_confirmed(
             "E_CONFIRMATION_REQUIRED",
             "确认能力不存在；请先本地 prepare＋confirm",
         )
-    # 错目标 → 拒绝且不消费（C3.2.2/C3.2.3）
     requested_target = arguments.get("execute_target")
-    if requested_target is not None and requested_target != confirmation["execute_target"]:
+    target = (
+        requested_target
+        if requested_target is not None
+        else confirmation["execute_target"]
+    )
+    try:
+        context = registry.consume_for_execution(
+            ctx.sid,
+            arguments["confirmation_id"],
+            target=target,
+            store=ctx.store,
+            guard=ctx.guard,
+        )
+    except AppError as exc:
+        # 错目标/已消费/过期/guard 不可核验：均在此前返回且不消费（005:690）
+        return _rejected_from_app_error(call, exc)
+
+    # 005:690：引擎/core 只从冻结快照独立解码；消费后不再数值重取。
+    facts = canonical_loads(context["canonical_input_bytes"])
+    bundle = canonical_loads(context["verified_bundle_bytes"])
+    tax_type = str(context["tax_type"])
+    try:
+        result = run_engine(
+            tax_type,
+            copy.deepcopy(facts),
+            copy.deepcopy(bundle),
+            availability=context["availability_context"],
+        )
+        core = build_core(
+            tax_type,
+            facts,
+            context["binding"],
+            result,
+            bundle,
+        )
+        receipt = registry.complete_execution(
+            context, core, store=ctx.store, guard=ctx.guard
+        )
+    except AppError as exc:
+        registry.fail_execution(context, exc.code)
+        return _rejected_from_app_error(call, exc)
+    except Exception:
+        registry.fail_execution(context, "E_INTERNAL")
+        raise
+    if receipt["outcome"] == "discarded":
         return _rejected(
             call,
-            "E_CONFIRMATION_TARGET_MISMATCH",
-            "请从发起确认的同一税项入口执行",
+            "E_CONFIRMATION_STALE",
+            "会话已清空或授权已到期；本次执行已丢弃（不写记录）",
         )
-    if confirmation.get("consumed"):
-        return _rejected(call, "E_CONFIRMATION_CONSUMED", "该确认已使用（无双重计算）")
-    if (
-        registry.session_epoch != confirmation.get("session_epoch")
-        or time.monotonic() - confirmation["created_at"] > confirmation["ttl"]
-    ):
-        return _rejected(
-            call, "E_CONFIRMATION_STALE", "确认能力已失效；请重新 prepare＋confirm"
-        )
-    if confirmation.get("input_revision") != registry.current_input_revision(ctx.sid):
-        return _rejected(
-            call, "E_CONFIRMATION_STALE", "输入已修订；请重新 prepare＋confirm"
-        )
-    if confirmation["binding"] != ctx.binding:
-        return _rejected(
-            call, "E_CONFIRMATION_STALE", "规则绑定已变化；请重新 prepare＋confirm"
-        )
-    if not registry.mark_consumed(ctx.sid, confirmation["confirmation_id"]):
-        return _rejected(call, "E_CONFIRMATION_CONSUMED", "该确认已使用（无双重计算）")
-
-    # 引擎执行（app/engines/* 纯函数；规则束按确认 binding 精确载入）
-    prepared = registry.get_prepared(ctx.sid, confirmation.get("prepared_id", ""))
-    facts = prepared["input"] if prepared is not None else {}
-    bundle = ctx.store.get_bundle(confirmation["binding"]["bundle_id"])
-    result = run_engine(confirmation["tax_type"], facts, bundle)
-    core = build_core(
-        confirmation["tax_type"], facts, confirmation["binding"], result, bundle
-    )
-    record_id = "r-" + secrets.token_hex(12)
-    confirmation["record_id"] = record_id
-    registry.save_record(ctx.sid, {"record_id": record_id, "core": core})
     return _entry(
         call,
         outcome="executed",
         result={
-            "record_id": record_id,
+            "record_id": receipt["record_id"],
             "status": core["status"],
             "amounts": dict(core.get("amounts") or {}),
         },

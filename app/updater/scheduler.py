@@ -38,12 +38,14 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
+from app.core.hashing import bundle_content_hash
+from app.updater import observer
 from app.updater.archive import record_snapshot
-from app.updater.classifier import build_candidate
+from app.updater.classifier import build_candidate, is_stop_auto_path
 from app.updater.fetcher import fetch_document
 from app.updater.parser import extract, validate_manifest
 from app.updater.publisher import publish_update
-from app.updater.reference import reference_evidence_facts
+from app.updater.reference import AFFECTED_CASES, REQUIRED_CASES, reference_evidence_facts
 from app.updater.testgate import run_gate
 from app.updater.validator import validate_change
 
@@ -309,42 +311,70 @@ class Scheduler:
             for row in rows
         ]
 
+    def _public_state_rows(self) -> list[dict[str, str]]:
+        """把 observer 内部行映射为既有公开状态（不泄漏 `observer_pending:`）。"""
+        mapped: list[dict[str, str]] = []
+        for row in self._read_states():
+            public = observer.public_state_for(
+                self._store, row["source_id"], row["state"], row["period"]
+            )
+            if public is None:
+                continue
+            mapped.append(
+                {
+                    "source_id": row["source_id"],
+                    "state": public,
+                    "period": row["period"],
+                }
+            )
+        return mapped
+
     def source_states(self) -> dict[str, list[str]]:
-        rows = self._read_states()
+        rows = self._public_state_rows()
         return {
-            source_id: [row["state"] for row in rows if row["source_id"] == source_id]
+            source_id: [
+                row["state"] for row in rows if row["source_id"] == source_id
+            ]
             for source_id in self._source_ids
         }
+
+    def _sync_source_states_in_txn(
+        self, conn, source_id: str, matched: set[tuple[str, str]]
+    ) -> None:
+        """在调用方事务内同步普通 C7 规则状态；SELECT/delete 排除 observer 行。"""
+        desired = {(state, period or "") for state, period in matched}
+        rows = conn.execute(
+            "SELECT state, period FROM updater_source_states"
+            " WHERE source_id = ? AND state NOT LIKE 'observer_pending:%'",
+            (source_id,),
+        ).fetchall()
+        existing = {(row[0], row[1] or "") for row in rows}
+        for state, period in sorted(existing - desired):
+            conn.execute(
+                "DELETE FROM updater_source_states"
+                " WHERE source_id = ? AND state = ? AND period = ?"
+                " AND state NOT LIKE 'observer_pending:%'",
+                (source_id, state, period),
+            )
+        if desired - existing:
+            entered_at = _iso(self._clock.now())
+            for state, period in sorted(desired - existing):
+                conn.execute(
+                    "INSERT OR REPLACE INTO updater_source_states"
+                    " (source_id, state, period, entered_at) VALUES (?,?,?,?)",
+                    (source_id, state, period, entered_at),
+                )
 
     def _sync_source_states(
         self, source_id: str, matched: set[tuple[str, str]]
     ) -> None:
         """来源重验成功后同步规则状态（enter 新状态、clear 未再确认状态；
         trusted_offline/unknown 随重验一致 clear，C7.9）。"""
-        desired = {(state, period or "") for state, period in matched}
         with self._store._write_lock:
             conn = self._store._connect()
             try:
                 conn.execute("BEGIN IMMEDIATE")
-                rows = conn.execute(
-                    "SELECT state, period FROM updater_source_states WHERE source_id = ?",
-                    (source_id,),
-                ).fetchall()
-                existing = {(row[0], row[1] or "") for row in rows}
-                for state, period in sorted(existing - desired):
-                    conn.execute(
-                        "DELETE FROM updater_source_states"
-                        " WHERE source_id = ? AND state = ? AND period = ?",
-                        (source_id, state, period),
-                    )
-                if desired - existing:
-                    entered_at = _iso(self._clock.now())
-                    for state, period in sorted(desired - existing):
-                        conn.execute(
-                            "INSERT OR REPLACE INTO updater_source_states"
-                            " (source_id, state, period, entered_at) VALUES (?,?,?,?)",
-                            (source_id, state, period, entered_at),
-                        )
+                self._sync_source_states_in_txn(conn, source_id, matched)
                 conn.execute("COMMIT")
             except BaseException:
                 try:
@@ -354,6 +384,23 @@ class Scheduler:
                 raise
             finally:
                 conn.close()
+
+    def _matched_states(
+        self, manifest: Mapping[str, Any], parsed: Mapping[str, Any]
+    ) -> set[tuple[str, str]]:
+        matched: set[tuple[str, str]] = set()
+        for rule in manifest.get("legal_state_rules", []) or []:
+            anchor = rule.get("anchor")
+            match = rule.get("match")
+            for notice in parsed.get("notices", []):
+                if (
+                    notice.get("anchor") == anchor
+                    and isinstance(match, str)
+                    and match in notice.get("text", "")
+                ):
+                    matched.add((str(rule["state"]), str(rule.get("period") or "")))
+                    break
+        return matched
 
     def _enter_state(self, source_id: str, state: str, period: str) -> None:
         with self._store._write_lock:
@@ -397,7 +444,7 @@ class Scheduler:
 
     def availability(self, period: str) -> dict[str, Any]:
         """REQ-18 降级判定：blocked > trusted_offline > ok（受影响期间精确阻断）。"""
-        rows = self._read_states()
+        rows = self._public_state_rows()
         states_for_period = sorted(
             {row["state"] for row in rows if row["period"] == period}
         )
@@ -459,9 +506,9 @@ class Scheduler:
             return None
         meta = self._load_meta()
         next_due = _parse_dt(meta.get("next_due_at"))
-        if next_due is None or now < next_due:
-            return None
-        return self._run("scheduled")
+        if next_due is None or now >= next_due:
+            return self._run("scheduled")
+        return None
 
     def trigger_manual(self) -> dict[str, Any]:
         """手动触发与计划同一管线；已有进行中作业 → 立即返回现有作业
@@ -573,14 +620,42 @@ class Scheduler:
         outcomes: dict[str, dict[str, Any]] = {}
         parses: dict[str, dict[str, Any]] = {}
         any_failed = False
+        try:
+            pointer = store.current()
+            current_content: dict[str, Any] | None = store.get_bundle(
+                pointer["bundle_id"]
+            )
+        except AppError:
+            current_content = None
         for source in self._sources:
             source_id = str(source["source_id"])
             url = str(source["url"])
             manifest = source.get("manifest") or {}
+            observer_slots = [
+                slot
+                for slot in (source.get("observer_slots") or [])
+                if isinstance(slot, dict)
+            ]
             attempt = self._clock.now()
+            # 防漏 guard：manifest 校验/fetch 前先 durable 提交该源观察 checking
+            # （每源独立落盘，另一来源失败不得跳过本来源 guard，005 §15.5）。
+            for slot in observer_slots:
+                path = str(slot.get("fullpath") or "")
+                for period in observer.periods_for(path):
+                    observer.record_event(
+                        store,
+                        source_id=source_id,
+                        path=path,
+                        period=period,
+                        kind="checking",
+                        event_detail={"phase": "manifest", "snapshot_hash": None},
+                        sticky=None,
+                        clock=self._clock,
+                    )
             outcome: str
             digest: str | None = None
             parsed: dict[str, Any] | None = None
+            body: bytes | None = None
             violations = validate_manifest(
                 manifest, verified_anchors=_confirmed_anchors(manifest)
             )
@@ -595,6 +670,22 @@ class Scheduler:
                     outcome = "fetch_error"
                 else:
                     digest = "sha256:" + hashlib.sha256(body).hexdigest()
+                    for slot in observer_slots:
+                        path = str(slot.get("fullpath") or "")
+                        for period in observer.periods_for(path):
+                            observer.record_event(
+                                store,
+                                source_id=source_id,
+                                path=path,
+                                period=period,
+                                kind="checking",
+                                event_detail={
+                                    "phase": "parse",
+                                    "snapshot_hash": digest,
+                                },
+                                sticky=None,
+                                clock=self._clock,
+                            )
                     try:
                         parsed = extract(manifest, body)
                         outcome = "ok"
@@ -617,9 +708,20 @@ class Scheduler:
                     url=url,
                     retrieved_at=_iso(attempt),
                     content_hash=digest,
-                    body=body,
+                    body=body if body is not None else b"",
                 )
                 parses[source_id] = parsed
+                observer_failed = self._commit_source_round(
+                    source_id=source_id,
+                    manifest=manifest,
+                    parsed=parsed,
+                    observer_slots=observer_slots,
+                    current_content=current_content,
+                    body=body,
+                    snapshot_hash=digest,
+                )
+                if observer_failed:
+                    any_failed = True
             else:
                 any_failed = True
                 if outcome in {"unreachable", "fetch_error"} and (
@@ -627,6 +729,11 @@ class Scheduler:
                 ):
                     # C7.9 enter：网络不可达，但最近已核验快照仍现行
                     self._enter_state(source_id, "trusted_offline", "")
+                self._commit_observer_failure(
+                    source_id=source_id,
+                    observer_slots=observer_slots,
+                    outcome=outcome,
+                )
 
         if any_failed:
             job["status"] = "failed"
@@ -687,6 +794,185 @@ class Scheduler:
         job["status"] = "succeeded"
         job["in_progress"] = False
         self._finish_job_row(job)
+
+    def _observer_success_events(
+        self,
+        *,
+        manifest: Mapping[str, Any],
+        observer_slots: Sequence[Mapping[str, Any]],
+        current_content: Mapping[str, Any] | None,
+        body: bytes | None,
+        snapshot_hash: str | None,
+    ) -> list[tuple[str, str, str, dict[str, Any], bool | None]]:
+        """复用 extract 读取观察副本；返回待与 notice 同步同事务提交的事件。"""
+        if not observer_slots:
+            return []
+        observer_manifest = dict(manifest)
+        observer_manifest["slots"] = [dict(slot) for slot in observer_slots]
+        try:
+            observed = extract(observer_manifest, body if body is not None else b"")
+        except Exception as exc:  # noqa: BLE001 - 观察失败必须持久 unknown
+            code = "anchor_missing" if isinstance(exc, LookupError) else "parse_error"
+            return [
+                (
+                    str(slot.get("fullpath") or ""),
+                    period,
+                    "observation_failed",
+                    {
+                        "phase": "parse",
+                        "code": code,
+                        "snapshot_hash": snapshot_hash,
+                    },
+                    True,
+                )
+                for slot in observer_slots
+                for period in observer.periods_for(str(slot.get("fullpath") or ""))
+            ]
+        values = observed.get("values") if isinstance(observed, Mapping) else {}
+        events: list[tuple[str, str, str, dict[str, Any], bool | None]] = []
+        for slot in observer_slots:
+            path = str(slot.get("fullpath") or "")
+            for period in observer.periods_for(path):
+                try:
+                    kind, event_detail = observer.evaluate_value(
+                        slot, str((values or {}).get(path, "")), current_content or {}
+                    )
+                except Exception:  # noqa: BLE001 - 标量/定位失败＝sticky unknown
+                    events.append(
+                        (
+                            path,
+                            period,
+                            "observation_failed",
+                            {
+                                "phase": "normalize",
+                                "code": "invalid_scalar",
+                                "snapshot_hash": snapshot_hash,
+                            },
+                            True,
+                        )
+                    )
+                    continue
+                event_detail["snapshot_hash"] = snapshot_hash
+                events.append(
+                    (
+                        path,
+                        period,
+                        kind,
+                        event_detail,
+                        True if kind == "value_changed" else None,
+                    )
+                )
+        return events
+
+    def _commit_source_round(
+        self,
+        *,
+        source_id: str,
+        manifest: Mapping[str, Any],
+        parsed: Mapping[str, Any],
+        observer_slots: Sequence[Mapping[str, Any]],
+        current_content: Mapping[str, Any] | None,
+        body: bytes | None,
+        snapshot_hash: str | None,
+    ) -> bool:
+        """每源正常结束：普通 notice 同步与 observer 差异在同一 store 事务落盘。
+
+        返回是否存在 observation_failed（观察失败＝检查失败，但仍保留 sticky
+        pending；值变更/value_equal 不是检查失败）。
+        """
+        events = self._observer_success_events(
+            manifest=manifest,
+            observer_slots=observer_slots,
+            current_content=current_content,
+            body=body,
+            snapshot_hash=snapshot_hash,
+        )
+        matched = self._matched_states(manifest, parsed)
+        with self._store._write_lock:
+            conn = self._store._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for path, period, kind, event_detail, sticky in events:
+                    observer.apply_event(
+                        conn,
+                        store=self._store,
+                        source_id=source_id,
+                        path=path,
+                        period=period,
+                        kind=kind,
+                        event_detail=event_detail,
+                        sticky=sticky,
+                        clock=self._clock,
+                    )
+                self._sync_source_states_in_txn(conn, source_id, matched)
+                conn.execute("COMMIT")
+            except BaseException:
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
+        return any(event[2] == "observation_failed" for event in events)
+
+    def _commit_observer_failure(
+        self,
+        *,
+        source_id: str,
+        observer_slots: Sequence[Mapping[str, Any]],
+        outcome: str,
+    ) -> None:
+        """来源失败时先完成本来源观察 guard 落盘（另一来源失败不得跳过）。"""
+        if not observer_slots:
+            return
+        last_verified = self._last_verified_digest(source_id)
+        if outcome in {"unreachable", "fetch_error"}:
+            kind = "transport_unavailable"
+            detail = {
+                "code": outcome,
+                "last_verified_snapshot_hash": last_verified,
+            }
+            sticky: bool | None = None if last_verified is not None else True
+        else:
+            kind = "observation_failed"
+            detail = {
+                "phase": "manifest" if outcome == "invalid_manifest" else "parse",
+                "code": (
+                    "invalid_manifest"
+                    if outcome == "invalid_manifest"
+                    else "parse_error"
+                ),
+                "snapshot_hash": None,
+            }
+            sticky = True
+        with self._store._write_lock:
+            conn = self._store._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for slot in observer_slots:
+                    path = str(slot.get("fullpath") or "")
+                    for period in observer.periods_for(path):
+                        observer.apply_event(
+                            conn,
+                            store=self._store,
+                            source_id=source_id,
+                            path=path,
+                            period=period,
+                            kind=kind,
+                            event_detail=detail,
+                            sticky=sticky,
+                            clock=self._clock,
+                        )
+                conn.execute("COMMIT")
+            except BaseException:
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
 
     def _record_source_check(
         self,
@@ -758,24 +1044,14 @@ class Scheduler:
             slot_by_path = {
                 slot["fullpath"]: slot for slot in manifest.get("slots", []) or []
             }
-            matched: set[tuple[str, str]] = set()
-            for rule in manifest.get("legal_state_rules", []) or []:
-                anchor = rule.get("anchor")
-                match = rule.get("match")
-                for notice in parsed.get("notices", []):
-                    if (
-                        notice.get("anchor") == anchor
-                        and isinstance(match, str)
-                        and match in notice.get("text", "")
-                    ):
-                        matched.add(
-                            (str(rule["state"]), str(rule.get("period") or ""))
-                        )
-                        break
-            self._sync_source_states(source_id, matched)
             for fullpath, value in parsed.get("values", {}).items():
-                if _get_path(current_content.get("data"), fullpath) == value:
-                    continue  # 与现行已发布内容一致 → 无变更
+                baseline_path = (
+                    observer.data_target(fullpath)
+                    if is_stop_auto_path(fullpath)
+                    else fullpath
+                )
+                if _get_path(current_content.get("data"), baseline_path) == value:
+                    continue  # 与现行已发布内容一致 → 无变更（旧路径按映射基线比较）
                 slot = slot_by_path.get(fullpath)
                 entry = changes_by_path.setdefault(
                     fullpath,
@@ -812,6 +1088,40 @@ class Scheduler:
             )
         return current_content, changes, facts, conflict
 
+    def _required_case_map(self, changed_paths: Sequence[str]) -> dict[str, str]:
+        """服务器固定 path→case 表；测试侧 B5 注入仅在双独立承载源时可替代。
+
+        生产 REQUIRED_CASES 保持静态回归三例；受影响变更若其计划 affected case
+        不在服务端 required 集合，门禁按 required 不符隔离（缺 affected witness
+        → coverage_gap），不采信报告自减。D1=a 的 test-only 第二独立源＋B5
+        required case 仅由测试注入 required_cases 生效，不扩生产 allowlist。
+        """
+        carriers: dict[str, int] = {}
+        for source in self._sources:
+            for slot in (source.get("manifest") or {}).get("slots") or []:
+                fullpath = str(slot.get("fullpath") or "")
+                carriers[fullpath] = carriers.get(fullpath, 0) + 1
+        configured = [str(case_id) for case_id in self._required_cases]
+        test_only = bool(configured) and not set(configured).issubset(
+            set(REQUIRED_CASES)
+        )
+        mapping: dict[str, str] = {}
+        for path in changed_paths:
+            planned = AFFECTED_CASES.get(path)
+            if planned is not None and planned in configured:
+                mapping[path] = planned
+            elif (
+                test_only
+                and configured
+                and carriers.get(path, 0) >= 2
+            ):
+                mapping[path] = configured[0]
+            elif planned is not None:
+                mapping[path] = planned
+            elif configured:
+                mapping[path] = configured[0]
+        return mapping
+
     def _decide_publish(
         self,
         job: Mapping[str, Any],
@@ -836,8 +1146,12 @@ class Scheduler:
         # 门禁事实＝本轮分类独立事实＋必需 case 的已批准参数证据（固定参考
         # fixture，C8.2/C8.4；不参与候选参数核验——后者已由 validator 完成）。
         gate_facts = list(facts) + reference_evidence_facts(self._required_cases)
+        candidate = built["content"]
+        candidate_hash = bundle_content_hash(candidate)
+        changed_paths = [str(change["fullpath"]) for change in changes]
+        baseline = self._store.current()
         report = run_gate(
-            candidate_content=built["content"],
+            candidate_content=candidate,
             current_content=current_content,
             manifests=manifests,
             independent_facts=gate_facts,
@@ -845,6 +1159,14 @@ class Scheduler:
             harness=self._harness if self._harness is not None else _UnboundReferenceHarness(),
             engine=self._engine if self._engine is not None else _UnboundCandidateEngine(),
             outbound=None,
+            candidate_hash=candidate_hash,
+            changed_paths=changed_paths,
+            required_case_map=self._required_case_map(changed_paths),
+            purpose="update",
+            baseline=baseline,
+            report_id=f"report:{job['job_id']}:{candidate_hash}",
+            consumed_report_ids=(),
+            current_store_db=str(self._store._path),
         )
         if report["decision"] != "publish":
             return (
@@ -855,8 +1177,12 @@ class Scheduler:
         published = publish_update(
             self._store,
             job_id=str(job["job_id"]),
-            content=built["content"],
-            evidence_refs=list(facts),
+            content=candidate,
+            evidence_refs=list(gate_facts),
             validation_report=report,
+            purpose="update",
+            baseline=baseline,
+            manifests=manifests,
+            required_cases=self._required_cases,
         )
         return ("published", published["bundle_id"], None)

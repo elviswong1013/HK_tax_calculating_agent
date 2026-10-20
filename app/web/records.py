@@ -17,6 +17,7 @@ REQ: REQ-13（record 全字段：税项/期间/输入摘要/binding/步骤（税
 
 from __future__ import annotations
 
+import copy
 import html
 import json
 from decimal import Decimal
@@ -25,6 +26,7 @@ from typing import Any, Mapping
 
 from app.core.errors import AppError
 from app.core.hashing import bundle_content_hash
+from app.config import RULES_SCHEMA_VERSION
 from app.engines.personal_assessment import compare_personal_assessment
 from app.engines.profits import calculate_profits_tax
 from app.engines.property import calculate_property_tax
@@ -32,6 +34,8 @@ from app.engines.salaries import calculate_salaries_tax
 from app.engines.stamps.lease import calculate_lease_stamp_duty
 from app.engines.stamps.property import calculate_property_avd
 from app.engines.stamps.stock import calculate_stock_stamp_duty
+from app.rules import runtime as rules_runtime
+from app.rules.admission import FIXED_PROFILE_ID_BY_TAX, verify_fixed_profile
 
 # REQ-13：免责声明（记录字段与打印渲染共用；非官方认证、仅为估算）
 DISCLAIMER = (
@@ -74,11 +78,21 @@ _ENGINE_BY_TAX_TYPE = {
 }
 
 
-def run_engine(tax_type: str, facts: Mapping, bundle: Mapping) -> dict:
+def run_engine(
+    tax_type: str,
+    facts: Mapping,
+    bundle: Mapping,
+    *,
+    availability: Mapping | None = None,
+) -> dict:
     """按税项调用对应纯函数引擎（app/engines/*，只读调用）。
 
-    事实校验入口见 app.api.validation（C3.5，六税项全部开放）；未知税项在此
-    显式拒绝（无死分支、不静默 blocked）。
+    事实校验入口见 app.api.validation（C3.5）；未知税项在此显式拒绝（无死
+    分支、不静默 blocked）。薪俸/PA v2 引擎要求显式 AvailabilityContext
+    （Annex 005 §2.1：缺 context 不放行）；其余五税签名/算法不变。
+
+    B1（复核报告）：不得以发行模块数据补全传入束（消费前准入检查负责
+    缺键 fail-closed；引擎直接解码**传入的**独立工作副本）。
     """
     engine = _ENGINE_BY_TAX_TYPE.get(tax_type)
     if engine is None:
@@ -87,6 +101,8 @@ def run_engine(tax_type: str, facts: Mapping, bundle: Mapping) -> dict:
             f"未知税项：{tax_type!r}（不在已批准税项执行表内）",
             field="tax_type",
         )
+    if tax_type in ("salaries_tax", "personal_assessment") and availability is not None:
+        return engine(facts, bundle, availability=availability)
     return engine(facts, bundle)
 
 
@@ -134,7 +150,16 @@ def build_steps(
 
     partial（部分结果，C3.3/C3.4）：已算组件照常呈现——缺组件（None 金额）
     的步骤省略，不以零或猜测填补。
+
+    v2（Annex 005 §14 / S002 ADR-5）：薪俸/PA 的 steps＝引擎产出的 tagged
+    条目（context/decision/assessment/scenario/selection/next_year）原样；
+    其余五税维持既有中文步骤构建器。
     """
+    if tax_type in ("salaries_tax", "personal_assessment"):
+        data = bundle_content.get("data") or {}
+        if "allowances" in data:
+            tagged = result.get("steps") or []
+            return [dict(step) for step in tagged]
     builder = _STEPS_BUILDERS.get(tax_type)
     if builder is None:
         return []
@@ -149,8 +174,10 @@ def _salaries_steps(
     bundle_content: Mapping, facts: Mapping, result: Mapping
 ) -> list[dict]:
     data = bundle_content["data"]["salaries"]
+    shared = bundle_content["data"]
+    allowances = shared.get("allowances") or {}
     year = str(facts.get("year_of_assessment") or "")
-    year_data = data["allowances"].get(year) or {}
+    year_data = allowances.get(year) or {}
     amounts = result["amounts"]
     progressive = "／".join(
         _percent(band["rate_bp"]) for band in data["progressive_bands"]
@@ -158,18 +185,23 @@ def _salaries_steps(
     standard = "／".join(
         _percent(band["rate_bp"]) for band in data["standard_rate_bands"]
     )
-    entry = data["reductions"].get(year)
+    entry = (shared.get("reductions") or {}).get(year)
     if entry is None:
         reduction_desc = f"{year} 无宽减条目（宽减 0）"
     else:
         reduction_desc = (
             f"税额×{_percent(entry['percent_bp'])}、上限 {entry['cap']} 港元封顶"
         )
+
+    def _amount(key: str) -> object:
+        node = year_data.get(key)
+        return node.get("amount") if isinstance(node, Mapping) else node
+
     parent_desc = ""
-    if year_data.get("parent_aged_60_or_above"):
+    if _amount("parent_high"):
         parent_desc = (
-            f"；受养父母（s.30/30A）：60+ {year_data.get('parent_aged_60_or_above')}"
-            f"／55–59 {year_data.get('parent_aged_55_to_59')} 港元"
+            f"；受养父母（s.30/30A）：60+ {_amount('parent_high')}"
+            f"／55–59 {_amount('parent_low')} 港元"
             "（全年连续同住额外同额，s.30(3)(b)）"
         )
     steps = [
@@ -182,13 +214,13 @@ def _salaries_steps(
         _step(
             2,
             "扣除（deduction）：强积金强制性供款按附表 3B 每人上限 "
-            f"{data['mpf_deduction_cap']} 港元封顶后从收入中扣除。"
+            f"{allowances.get('mpf_deduction_cap')} 港元封顶后从收入中扣除。"
         ),
         _step(
             3,
             "免税额（allowance）：按附表 4 "
-            f"{year} 行套用（基本 {year_data.get('basic')}／已婚 "
-            f"{year_data.get('married')}／每名子女 {year_data.get('child')}"
+            f"{year} 行套用（基本 {_amount('basic')}／已婚 "
+            f"{_amount('married')}／每名子女 {_amount('child_base')}"
             f" 港元{parent_desc}）。"
         ),
         _step(
@@ -338,22 +370,27 @@ def _pa_steps(
     bundle_content: Mapping, facts: Mapping, result: Mapping
 ) -> list[dict]:
     data = bundle_content["data"]["personal_assessment"]
+    shared = bundle_content["data"]
     amounts = result["amounts"]
     year = str(facts.get("year_of_assessment") or "")
-    year_data = data["allowances"].get(year) or {}
+    year_data = (shared.get("allowances") or {}).get(year) or {}
     progressive = "／".join(
         _percent(band["rate_bp"]) for band in data["progressive_bands"]
     )
     standard = "／".join(
         _percent(band["rate_bp"]) for band in data["standard_rate_bands"]
     )
-    entry = data["reductions"].get(year)
+    entry = (shared.get("reductions") or {}).get(year)
     if entry is None:
         reduction_desc = f"{year} 无宽减条目（宽减 0）"
     else:
         reduction_desc = (
             f"税额×{_percent(entry['percent_bp'])}、上限 {entry['cap']} 港元封顶"
         )
+
+    def _amount(key: str) -> object:
+        node = year_data.get(key)
+        return node.get("amount") if isinstance(node, Mapping) else node
     persons = (facts.get("persons") or []) or []
     best = result.get("best_scenario")
     best_desc = (
@@ -379,8 +416,8 @@ def _pa_steps(
         _step(
             3,
             "免税额（allowance）：按附表 4 "
-            f"{year} 行（基本 {year_data.get('basic')}／已婚 "
-            f"{year_data.get('married')} 港元；已婚合并按 s.42A 一份已婚"
+            f"{year} 行（基本 {_amount('basic')}／已婚 "
+            f"{_amount('married')} 港元；已婚合并按 s.42A 一份已婚"
             "免税额覆盖两人）。"
         ),
         _step(
@@ -534,15 +571,47 @@ _STEPS_BUILDERS = {
 
 
 # ------------------------------------------------------------------ 原包重放
-def recompute_for_replay(core: Mapping, store: Any, engine_version: str) -> dict:
-    """C3.1 replay：按记录确认事实＋原 binding 校验后由引擎重算。
+_REPLAY_V2_TAX_TYPES = ("salaries_tax", "personal_assessment")
 
-    - 引擎版本不完全相等 → 409 E_BUNDLE_INCOMPATIBLE（不降级、不迁移）；
-    - 原规则束缺失/内容哈希与 binding 不符 → 同样拒绝；
-    - 不读取记录保存的 amounts（不信任导出税额）。
+
+def _merge_replay_warnings(result: dict, warnings: Mapping | list | None) -> None:
+    """005:71：admission/guard 提示并入 replay 结果（去重、不改金额）。"""
+    merged = list(result.get("warnings") or [])
+    for text in warnings or []:
+        if text not in merged:
+            merged.append(text)
+    if merged:
+        result["warnings"] = merged
+
+
+def recompute_for_replay(
+    core: Mapping,
+    store: Any,
+    engine_version: str,
+    *,
+    availability_provider: Any = None,
+    guard: Any = None,
+) -> dict:
+    """C3.1 replay（005 §2.2）：按记录确认事实＋原 binding 校验后由引擎重算。
+
+    失败优先级（七目标统一，先于任何 context 查询）：
+    1. engine 版本不完全相等 → 409 E_BUNDLE_INCOMPATIBLE；
+    2. 原始规则束缺失／原 hash 不符／schema 不符／固定 P 身份、内容或 digest
+       不自洽／本引擎固定 profile 缺失 → 409 E_BUNDLE_INCOMPATIBLE；
+    3. 兼容通过后仅两税经可信 `availability_provider` 取「record 原 binding、
+       原 bundle＋当前可信 guard」的 AvailabilityContext；current 不可核验
+       → 422 E_RULES_STATE_UNVERIFIABLE；仅 next 缺/拒绝由引擎保留当前金额、
+       next=null、partial（salary balance=null）；
+    4. 五非两税保持既有 current-period C7 guard（直接读同一可信 guard），
+       不调用两税 provider、不扩 next；guard/admission 的 trusted-offline
+       提示并入结果 warnings（005:76/:71）。
+
+    绝不 `pin_current`、不保存新 record、不改原 core/hash/input/steps、不产生
+    或改变 revision 与确认能力（005:74/:75）。
     """
+    tax_type = str(core.get("tax_type"))
     binding = core.get("binding") or {}
-    if binding.get("engine_version") != engine_version:
+    if not isinstance(binding, Mapping) or binding.get("engine_version") != engine_version:
         raise AppError(
             "E_BUNDLE_INCOMPATIBLE",
             "该记录由不同的引擎版本产生，拒绝重算（不降级、不迁移）",
@@ -554,12 +623,93 @@ def recompute_for_replay(core: Mapping, store: Any, engine_version: str) -> dict
             "E_BUNDLE_INCOMPATIBLE",
             "记录原规则束已不存在，拒绝重算（不降级、不迁移）",
         ) from exc
-    if bundle_content_hash(bundle) != binding.get("bundle_hash"):
+    try:
+        actual_hash = bundle_content_hash(bundle)
+    except (TypeError, ValueError) as exc:
+        raise AppError(
+            "E_BUNDLE_INCOMPATIBLE",
+            "原规则束内容形状损坏（无法复核哈希），拒绝重算（不迁移）",
+        ) from exc
+    if actual_hash != binding.get("bundle_hash"):
         raise AppError(
             "E_BUNDLE_INCOMPATIBLE",
             "原规则束内容与记录 binding 不符，拒绝重算（不降级、不迁移）",
         )
-    return run_engine(str(core.get("tax_type")), core.get("input") or {}, bundle)
+    if (
+        bundle.get("rules_schema_version") != RULES_SCHEMA_VERSION
+        or binding.get("rules_schema_version") != bundle.get("rules_schema_version")
+    ):
+        raise AppError(
+            "E_BUNDLE_INCOMPATIBLE",
+            "原规则束 schema 与记录 binding 不符或不受支持，拒绝重算"
+            "（不降级、不迁移）",
+        )
+    # 005:66/:895：固定 P 身份＋digest/内容自洽为兼容性阶段共同检查；仅核验
+    # profile（不核验年度活动规则，后者属 context 阶段 422）。
+    if tax_type not in FIXED_PROFILE_ID_BY_TAX:
+        raise AppError(
+            "E_BUNDLE_INCOMPATIBLE",
+            f"未知税项缺少固定 profile 身份：{tax_type!r}；拒绝重算（不迁移）",
+        )
+    try:
+        verify_fixed_profile(bundle, tax_type=tax_type)
+    except AppError as exc:
+        raise AppError(
+            "E_BUNDLE_INCOMPATIBLE",
+            "原规则束固定语义 profile 身份、内容或 digest 不自洽，拒绝重算"
+            "（不降级、不迁移）",
+        ) from exc
+
+    facts = core.get("input") or {}
+    availability: Mapping | None = None
+    admission_warnings: list = []
+    if tax_type in _REPLAY_V2_TAX_TYPES:
+        if not callable(availability_provider):
+            # 两税 replay 必须显式 context（005 §2.1：不得默认放行）
+            raise AppError(
+                "E_RULES_STATE_UNVERIFIABLE",
+                f"{tax_type}：replay 缺少可信 availability provider；拒算"
+                "（fail-closed）。",
+                field="availability",
+            )
+        provided = availability_provider(
+            tax_type, copy.deepcopy(dict(facts)), binding, bundle
+        )
+        # 005:71：provider 可同时返回 admission warnings；兼容旧协议（仅
+        # availability_context 映射）时按无提示处理。
+        if isinstance(provided, Mapping) and "availability_context" in provided:
+            availability = provided.get("availability_context")
+            admission_warnings = list(provided.get("warnings") or [])
+        else:
+            availability = provided
+        if not isinstance(availability, Mapping):
+            raise AppError(
+                "E_RULES_STATE_UNVERIFIABLE",
+                f"{tax_type}：availability provider 未返回可用 context；拒算"
+                "（fail-closed）。",
+                field="availability",
+            )
+    else:
+        # 005:76：五税保留既有 current-period C7 guard；不接 next/provider。
+        guard_read = rules_runtime.read_guard(
+            guard, tax_type=tax_type, facts=facts
+        )
+        admission = rules_runtime.admit_runtime(
+            binding,
+            bundle,
+            tax_type=tax_type,
+            facts=facts,
+            guard_read=guard_read,
+        )
+        admission_warnings = list(admission.get("warnings") or [])
+    result = run_engine(
+        tax_type,
+        copy.deepcopy(dict(facts)),
+        copy.deepcopy(dict(bundle)),
+        availability=availability,
+    )
+    _merge_replay_warnings(result, admission_warnings)
+    return result
 
 
 # ------------------------------------------------------------------ 打印渲染

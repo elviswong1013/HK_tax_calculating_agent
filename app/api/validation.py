@@ -12,32 +12,22 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from decimal import Decimal
 from typing import Any
 
 from app.config import SUPPORTED_YEARS
 from app.core.errors import AppError
+from app.core.facts_v2 import normalize_v2_facts
 from app.core.money import parse_amount, parse_ratio
-from app.rules.bundles.salaries import SUPPORTED_DEDUCTION_ITEM_TYPES
 
 _SCHEMA_VERSION = "1.0.0"
-SALARIES_TAX_TYPE = "salaries_tax"
+_V2_SCHEMA_VERSION = "2.0.0"
+
+# S002 ADR-3 版本表：薪俸/PA input 升 2.0.0；其余五税维持 1.0.0
+_V2_TAX_TYPES = ("salaries_tax", "personal_assessment")
 
 _YEAR_KEY_RE = re.compile(r"[0-9]{4}_[0-9]{2}")
 _DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
-_SALARIES_REQUIRED = (
-    "year_of_assessment",
-    "employment_income",
-    "mpf_mandatory_contributions",
-    "married_status",
-)
-_SALARIES_OPTIONAL = (
-    "dependent_children",
-    "dependent_parents",
-    "deduction_items",
-    "provisional_paid",
-)
 _TOP_LEVEL_KEYS = ("tax_type", "schema_version", "input")
 
 # —— 各税项字段表（C3.5；extra="forbid"；rank 等服务器派生字段按 E_INPUT_EXTRA 拒绝）——
@@ -51,8 +41,6 @@ _PROFITS_OPTIONAL = (
 )
 _PROPERTY_REQUIRED = ("year_of_assessment", "properties")
 _PROPERTY_OPTIONAL = ("preceding_year_property_facts",)
-_PA_REQUIRED = ("year_of_assessment", "married_status", "persons")
-_PA_OPTIONAL = ("provisional_paid",)
 _STAMP_PROPERTY_REQUIRED = ("instrument_date", "instrument_kind")
 _STAMP_PROPERTY_OPTIONAL = ("property_class", "consideration", "value", "prior_links")
 _STAMP_STOCK_REQUIRED = ("instrument_date", "documents")
@@ -96,6 +84,17 @@ def validate_prepare_body(body: Any) -> tuple[str, dict]:
             "stamp_stock／stamp_lease）",
             field="tax_type",
         )
+    if tax_type in _V2_TAX_TYPES:
+        # S002 §4.2：薪俸/PA 仅接受 2.0.0；旧 1.0.0 → 422 E_INPUT_TYPE
+        # field=schema_version，附重新 prepare＋confirm 指引（不迁移）
+        if body["schema_version"] != _V2_SCHEMA_VERSION:
+            raise AppError(
+                "E_INPUT_TYPE",
+                "薪俸税／个人入息课税仅接受 schema_version 2.0.0；旧确认已失效，"
+                "请重新 prepare＋confirm（不迁移旧 1.0.0 输入）。",
+                field="schema_version",
+            )
+        return tax_type, _validate_v2_input(body["input"], tax_type)
     validator = _TAX_VALIDATORS.get(tax_type)
     if validator is None:
         raise AppError(
@@ -152,6 +151,15 @@ def _canonical_year(inp: dict) -> str:
             field="year_of_assessment",
         )
     return year
+
+# ------------------------------------------------- 薪俸/PA v2 输入（schema 2.0.0）
+# Annex 005 §3–§7/§11：唯一结构权威＝app.core.facts_v2.normalize_v2_facts
+# （HTTP 信封校验与两纯引擎入口共用；本模块不保留第二套 v2 解析实现）。
+
+
+def _validate_v2_input(inp: Any, tax_type: str) -> dict:
+    """v2 输入 → canonical v2 input（005 §3–§7；E2 中立入口）。"""
+    return normalize_v2_facts(inp, tax_type=tax_type)
 
 
 def _amount_value(raw: Any, field: str) -> str:
@@ -219,315 +227,6 @@ def _tri_state_field(value: Any, field: str) -> dict:
             field=field,
         )
     return {"value": state}
-
-
-def _positive(text: str) -> bool:
-    return Decimal(text) > 0
-
-
-# ------------------------------------------------------------------ 薪俸税
-def validate_salaries_input(inp: Any) -> dict:
-    """三态输入校验（缺失≠显式零≠unknown）；返回 canonical 输入映射。"""
-    inp = _input_object(inp)
-    _require_keys(inp, _SALARIES_REQUIRED)
-    _reject_extra(inp, _SALARIES_REQUIRED + _SALARIES_OPTIONAL)
-
-    canonical: dict[str, Any] = {"year_of_assessment": _canonical_year(inp)}
-    for key in ("employment_income", "mpf_mandatory_contributions"):
-        canonical[key] = _amount_value(inp[key], key)
-
-    canonical["married_status"] = _validate_married_status(inp["married_status"])
-    if "dependent_children" in inp:
-        canonical["dependent_children"] = _validate_children(inp["dependent_children"])
-    if "dependent_parents" in inp:
-        canonical["dependent_parents"] = _validate_parents(inp["dependent_parents"])
-    if "deduction_items" in inp:
-        canonical["deduction_items"] = _validate_deductions(inp["deduction_items"])
-    if "provisional_paid" in inp:
-        # 已缴暂缴三态（REQ-8）：键缺失 ≠ 显式零；显式 "0" 是合法事实。
-        canonical["provisional_paid"] = _amount_value(
-            inp["provisional_paid"], "provisional_paid"
-        )
-    return canonical
-
-
-def _validate_married_status(value: Any) -> dict:
-    if not isinstance(value, dict):
-        raise AppError("E_INPUT_TYPE", "married_status 必须是对象", field="married_status")
-    extras = [key for key in value if key != "value"]
-    if extras:
-        raise AppError(
-            "E_INPUT_EXTRA",
-            f"married_status 含未知字段：{extras[0]}",
-            field=extras[0],
-        )
-    if "value" not in value:
-        raise AppError(
-            "E_INPUT_MISSING", "married_status.value 缺失", field="married_status.value"
-        )
-    status = value["value"]
-    if status == "unknown":
-        # 三态 unknown（仅资格类字段允许）→ 结构化中文问题清单（REQ-10）
-        raise AppError(
-            "E_ELIGIBILITY_UNKNOWN",
-            "婚姻状况未知，无法继续计算；请确认后重新提交。",
-            field="married_status.value",
-            extra={
-                "questions": [
-                    "你的婚姻状况是「单身」还是「已婚」？确认后将按对应免税额规则继续薪俸税估算。"
-                ]
-            },
-        )
-    if status not in ("single", "married"):
-        raise AppError(
-            "E_INPUT_TYPE",
-            "married_status.value 必须为 single／married／unknown",
-            field="married_status.value",
-        )
-    return {"value": status}
-
-
-def _validate_residence(value: Any) -> dict:
-    if not isinstance(value, dict):
-        raise AppError("E_INPUT_TYPE", "residence 必须是对象", field="residence")
-    extras = [key for key in value if key != "value"]
-    if extras:
-        raise AppError("E_INPUT_EXTRA", f"residence 含未知字段：{extras[0]}", field=extras[0])
-    if "value" not in value:
-        raise AppError("E_INPUT_MISSING", "residence.value 缺失", field="residence.value")
-    residence = value["value"]
-    if residence not in (True, False, "unknown"):
-        raise AppError(
-            "E_INPUT_TYPE", "residence.value 必须为布尔或 unknown", field="residence.value"
-        )
-    return {"value": residence}
-
-
-def _validated_birth_date(raw: Any) -> str:
-    if not isinstance(raw, str) or _DATE_RE.fullmatch(raw) is None:
-        raise AppError("E_INPUT_TYPE", "birth_date 必须为 YYYY-MM-DD 全匹配", field="birth_date")
-    try:
-        date.fromisoformat(raw)
-    except ValueError:
-        raise AppError(
-            "E_INPUT_TYPE", "birth_date 不是有效日历日期", field="birth_date"
-        ) from None
-    return raw
-
-
-def _validate_children(entries: Any) -> list[dict]:
-    if not isinstance(entries, list):
-        raise AppError(
-            "E_INPUT_TYPE", "dependent_children 必须是数组", field="dependent_children"
-        )
-    if len(entries) > 9:
-        raise AppError(
-            "E_INPUT_CONTRADICTORY",
-            "合格子女申索超过法定上限 9 名（C2.9）",
-            field="dependent_children",
-        )
-    validated: list[dict] = []
-    for index, entry in enumerate(entries):
-        if not isinstance(entry, dict):
-            raise AppError(
-                "E_INPUT_TYPE",
-                f"子女条目必须是对象：dependent_children[{index}]",
-                field="dependent_children",
-            )
-        allowed = {"birth_date", "residence", "claim_owner"}
-        extras = [key for key in entry if key not in allowed]
-        if extras:
-            # C2.9：rank 由服务器派生、非权威输入 → E_INPUT_EXTRA
-            raise AppError(
-                "E_INPUT_EXTRA",
-                f"子女条目含未知字段：{extras[0]}（rank 等由服务器派生，非权威输入）",
-                field=extras[0],
-            )
-        for required in ("birth_date", "residence"):
-            if required not in entry:
-                raise AppError(
-                    "E_INPUT_MISSING",
-                    f"子女条目缺少 {required}",
-                    field=required,
-                )
-        child: dict[str, Any] = {
-            "birth_date": _validated_birth_date(entry["birth_date"]),
-            "residence": _validate_residence(entry["residence"]),
-        }
-        if "claim_owner" in entry:
-            if not isinstance(entry["claim_owner"], str) or not entry["claim_owner"]:
-                raise AppError(
-                    "E_INPUT_TYPE",
-                    "claim_owner 必须为非空字符串",
-                    field="claim_owner",
-                )
-            child["claim_owner"] = entry["claim_owner"]
-        validated.append(child)
-    return validated
-
-
-def _validate_parents(entries: Any) -> list[dict]:
-    """受养父母条目（C3.5＋s.30(4)/s.30(3)(b) 资格事实三态扩展）。
-
-    - maintained{value}：s.30(4) 供养/维持判据事实（三态；缺失＝未提供，
-      由引擎按 needs_input 追问——缺失≠unknown≠false）；
-    - living_together_all_year{value}：s.30(3)(b) 全年连续同住额外额事实
-      （三态；缺失＝未申索额外额）。
-    """
-    if not isinstance(entries, list):
-        raise AppError(
-            "E_INPUT_TYPE", "dependent_parents 必须是数组", field="dependent_parents"
-        )
-    validated: list[dict] = []
-    for index, entry in enumerate(entries):
-        if not isinstance(entry, dict):
-            raise AppError(
-                "E_INPUT_TYPE",
-                f"受养人条目必须是对象：dependent_parents[{index}]",
-                field="dependent_parents",
-            )
-        allowed = {
-            "relationship",
-            "birth_date",
-            "residence",
-            "claim_owner",
-            "maintained",
-            "living_together_all_year",
-        }
-        extras = [key for key in entry if key not in allowed]
-        if extras:
-            raise AppError(
-                "E_INPUT_EXTRA",
-                f"受养人条目含未知字段：{extras[0]}",
-                field=extras[0],
-            )
-        for required in ("relationship", "birth_date", "residence"):
-            if required not in entry:
-                raise AppError(
-                    "E_INPUT_MISSING",
-                    f"受养人条目缺少 {required}",
-                    field=required,
-                )
-        parent: dict[str, Any] = {
-            "relationship": entry["relationship"],
-            "birth_date": _validated_birth_date(entry["birth_date"]),
-            "residence": _validate_residence(entry["residence"]),
-        }
-        if "maintained" in entry:
-            parent["maintained"] = _tri_state_field(
-                entry["maintained"], f"dependent_parents[{index}].maintained"
-            )
-        if "living_together_all_year" in entry:
-            parent["living_together_all_year"] = _tri_state_field(
-                entry["living_together_all_year"],
-                f"dependent_parents[{index}].living_together_all_year",
-            )
-        if "claim_owner" in entry:
-            if not isinstance(entry["claim_owner"], str) or not entry["claim_owner"]:
-                raise AppError(
-                    "E_INPUT_TYPE",
-                    "claim_owner 必须为非空字符串",
-                    field="claim_owner",
-                )
-            parent["claim_owner"] = entry["claim_owner"]
-        validated.append(parent)
-    return validated
-
-
-def _validate_deductions(entries: Any) -> list[dict]:
-    """逐项枚举扣除（无 catch-all「其他扣除」，SDD §3／REQ-10）。
-
-    - 不支持 item_type 正数申索 → E_DEDUCTION_UNSUPPORTED（422，双保险第一层；
-      引擎侧同码拒算兜底）；
-    - 不支持 item_type 显式 "0" → 合法、无效果（eligibility 三态仍参与校验）；
-    - eligibility value="unknown"（在册与否一律）→ E_ELIGIBILITY_UNKNOWN＋
-      中文 questions（422；资格未知不得默认可扣、不得被零金额吞掉）；
-    - eligibility 缺失 → 放行至引擎追问（缺失≠unknown 三态保留）。
-    """
-    if not isinstance(entries, list):
-        raise AppError(
-            "E_INPUT_TYPE", "deduction_items 必须是数组", field="deduction_items"
-        )
-    validated: list[dict] = []
-    for index, entry in enumerate(entries):
-        if not isinstance(entry, dict):
-            raise AppError(
-                "E_INPUT_TYPE",
-                f"扣除条目必须是对象：deduction_items[{index}]",
-                field="deduction_items",
-            )
-        allowed = {"item_type", "amount", "eligibility"}
-        extras = [key for key in entry if key not in allowed]
-        if extras:
-            raise AppError(
-                "E_INPUT_EXTRA",
-                f"扣除条目含未知字段：{extras[0]}（逐项枚举，无 catch-all）",
-                field=extras[0],
-            )
-        for required in ("item_type", "amount"):
-            if required not in entry:
-                raise AppError(
-                    "E_INPUT_MISSING",
-                    f"扣除条目缺少 {required}",
-                    field=required,
-                )
-        if not isinstance(entry["item_type"], str) or not entry["item_type"]:
-            raise AppError(
-                "E_INPUT_TYPE", "item_type 必须为非空字符串", field="item_type"
-            )
-        item_type = entry["item_type"]
-        amount = _amount_value(entry["amount"], "amount")
-        item: dict[str, Any] = {"item_type": item_type, "amount": amount}
-        if item_type not in SUPPORTED_DEDUCTION_ITEM_TYPES and _positive(amount):
-            raise AppError(
-                "E_DEDUCTION_UNSUPPORTED",
-                f"扣除项 {item_type} 不在薪俸税可扣除附表内（逐项枚举，无 "
-                "catch-all）；正数申索须拒算受影响税项（REQ-10）。",
-                field="item_type",
-            )
-        if "eligibility" in entry:
-            field = "eligibility"
-            eligibility = entry["eligibility"]
-            if not isinstance(eligibility, dict):
-                raise AppError(
-                    "E_INPUT_TYPE", f"{field} 必须是对象", field=field
-                )
-            extras = [key for key in eligibility if key != "value"]
-            if extras:
-                raise AppError(
-                    "E_INPUT_EXTRA",
-                    f"{field} 含未知字段：{extras[0]}",
-                    field=extras[0],
-                )
-            if "value" not in eligibility:
-                raise AppError(
-                    "E_INPUT_MISSING", f"{field}.value 缺失", field=f"{field}.value"
-                )
-            value = eligibility["value"]
-            if value == "unknown":
-                raise AppError(
-                    "E_ELIGIBILITY_UNKNOWN",
-                    f"扣除项 {item_type} 的资格状态未知；确认前不得计算（REQ-10；"
-                    "零金额亦不例外——unknown 不得被静默吞掉）。",
-                    field=f"deduction_items.{field}",
-                    extra={
-                        "questions": [
-                            f"扣除项 {item_type} 的资格状态为「未知」：请确认是否"
-                            "申索该项及是否符合对应扣除附表的申索资格（如长者住宿"
-                            "照顾开支的院舍类别与实际支付事实）；确认后将按法定"
-                            "上限计入。"
-                        ]
-                    },
-                )
-            if value is not True and value is not False:
-                raise AppError(
-                    "E_INPUT_TYPE",
-                    f'{field}.value 必须为 true／false／"unknown"',
-                    field=field,
-                )
-            item["eligibility"] = {"value": value}
-        validated.append(item)
-    return validated
 
 
 # ------------------------------------------------------------------ 利得税
@@ -812,11 +511,16 @@ def _validate_property_entry(entry: Any, *, preceding: bool = False) -> dict:
 
 
 def _validate_rates_paid_by_owner(value: Any) -> dict:
-    """差饷两条件事实（s.5(1A)(b)(i)）：{amount?, agreed{value}?, actually_paid{value}?}。"""
+    """差饷两条件事实（s.5(1A)(b)(i)）：{amount?, agreed, actually_paid?}。
+
+    v1 契约（复核报告 B4）：资格事实走 legacy `{value: true|false|"unknown"}`
+    包装（C3.5 三态）；原始 Tri 属 v2 形状，v1 须拒绝（v2 由 `_v2_property`
+    按原始 Tri 严格处理）。
+    """
     if not isinstance(value, dict):
         raise AppError(
             "E_INPUT_TYPE",
-            "rates_paid_by_owner 须为对象 {amount, agreed{value}, actually_paid{value}}",
+            "rates_paid_by_owner 须为对象 {amount, agreed, actually_paid}",
             field="rates_paid_by_owner",
         )
     allowed = {"amount", "agreed", "actually_paid"}
@@ -872,215 +576,6 @@ def _validate_deduction_items_for_property(entries: Any) -> list[dict]:
         validated.append(
             {"item_type": item_type, "amount": _amount_value(entry["amount"], "amount")}
         )
-    return validated
-
-
-# ---------------------------------------------------------- 个人入息课税
-def _validate_personal_assessment_input(inp: Any) -> dict:
-    inp = _input_object(inp)
-    _require_keys(inp, _PA_REQUIRED)
-    _reject_extra(inp, _PA_REQUIRED + _PA_OPTIONAL)
-
-    canonical: dict[str, Any] = {"year_of_assessment": _canonical_year(inp)}
-    canonical["married_status"] = _validate_married_status(inp["married_status"])
-    persons = inp["persons"]
-    if not isinstance(persons, list) or not persons:
-        raise AppError(
-            "E_INPUT_MISSING", "缺少 persons[]（个人入息课税按人汇聚事实）", field="persons"
-        )
-    canonical["persons"] = [_validate_person(p) for p in persons]
-    if "provisional_paid" in inp:
-        canonical["provisional_paid"] = _amount_value(
-            inp["provisional_paid"], "provisional_paid"
-        )
-    return canonical
-
-
-def _validate_person(entry: Any) -> dict:
-    if not isinstance(entry, dict):
-        raise AppError("E_INPUT_TYPE", "persons[] 元素须为对象", field="persons")
-    allowed = {
-        "person_id",
-        "employment_income",
-        "mpf_mandatory_contributions",
-        "properties",
-        "businesses",
-        "dependent_parents",
-        "dependent_children",
-    }
-    extras = [key for key in entry if key not in allowed]
-    if extras:
-        raise AppError(
-            "E_INPUT_EXTRA", f"persons[] 含未知字段：{extras[0]}", field=extras[0]
-        )
-    for required in ("person_id", "employment_income", "mpf_mandatory_contributions"):
-        if required not in entry:
-            raise AppError(
-                "E_INPUT_MISSING", f"person 缺少 {required}", field=required
-            )
-    pid = entry["person_id"]
-    if not isinstance(pid, str) or not pid:
-        raise AppError(
-            "E_INPUT_TYPE", "person_id 须为非空字符串", field="person_id"
-        )
-    canonical: dict[str, Any] = {
-        "person_id": pid,
-        "employment_income": _amount_value(entry["employment_income"], "employment_income"),
-        "mpf_mandatory_contributions": _amount_value(
-            entry["mpf_mandatory_contributions"], "mpf_mandatory_contributions"
-        ),
-    }
-    if "properties" in entry:
-        properties = entry["properties"]
-        if not isinstance(properties, list):
-            raise AppError(
-                "E_INPUT_TYPE", "properties 须为数组", field="properties"
-            )
-        canonical["properties"] = [_validate_pa_property(p) for p in properties]
-    if "businesses" in entry:
-        businesses = entry["businesses"]
-        if not isinstance(businesses, list):
-            raise AppError(
-                "E_INPUT_TYPE", "businesses 须为数组", field="businesses"
-            )
-        canonical["businesses"] = [_validate_pa_business(b) for b in businesses]
-    if "dependent_parents" in entry:
-        canonical["dependent_parents"] = _validate_pa_parents(
-            entry["dependent_parents"]
-        )
-    if "dependent_children" in entry:
-        canonical["dependent_children"] = _validate_pa_children(
-            entry["dependent_children"]
-        )
-    return canonical
-
-
-def _validate_pa_property(entry: Any) -> dict:
-    if not isinstance(entry, dict):
-        raise AppError("E_INPUT_TYPE", "properties 元素须为对象", field="properties")
-    allowed = {
-        "property_id",
-        "share",
-        "rent_received",
-        "rates_paid_by_owner",
-        "irrecoverable_rent",
-        "deposit_offsets",
-        "mortgage_interest",
-    }
-    extras = [key for key in entry if key not in allowed]
-    if extras:
-        raise AppError(
-            "E_INPUT_EXTRA", f"properties 含未知字段：{extras[0]}", field=extras[0]
-        )
-    for required in ("property_id", "share", "rent_received"):
-        if required not in entry:
-            raise AppError(
-                "E_INPUT_MISSING", f"property 缺少 {required}", field=required
-            )
-    pid = entry["property_id"]
-    if not isinstance(pid, str) or not pid:
-        raise AppError(
-            "E_INPUT_TYPE", "property_id 须为非空字符串", field="property_id"
-        )
-    canonical: dict[str, Any] = {
-        "property_id": pid,
-        "share": _ratio_value(entry["share"], "share"),
-        "rent_received": _amount_value(entry["rent_received"], "rent_received"),
-    }
-    for key in ("irrecoverable_rent", "deposit_offsets", "mortgage_interest"):
-        if key in entry:
-            canonical[key] = _amount_value(entry[key], key)
-    if "rates_paid_by_owner" in entry:
-        canonical["rates_paid_by_owner"] = _validate_rates_paid_by_owner(
-            entry["rates_paid_by_owner"]
-        )
-    return canonical
-
-
-def _validate_pa_business(entry: Any) -> dict:
-    if not isinstance(entry, dict):
-        raise AppError("E_INPUT_TYPE", "businesses 元素须为对象", field="businesses")
-    allowed = {"business_id", "entity_kind", "assessable_profit", "share"}
-    extras = [key for key in entry if key not in allowed]
-    if extras:
-        raise AppError(
-            "E_INPUT_EXTRA", f"businesses 含未知字段：{extras[0]}", field=extras[0]
-        )
-    for required in ("business_id", "entity_kind", "assessable_profit", "share"):
-        if required not in entry:
-            raise AppError(
-                "E_INPUT_MISSING", f"business 缺少 {required}", field=required
-            )
-    bid = entry["business_id"]
-    if not isinstance(bid, str) or not bid:
-        raise AppError(
-            "E_INPUT_TYPE", "business_id 须为非空字符串", field="business_id"
-        )
-    kind = entry["entity_kind"]
-    if kind not in ("sole_proprietorship", "partnership"):
-        raise AppError(
-            "E_INPUT_TYPE",
-            "entity_kind 必须为 sole_proprietorship／partnership",
-            field="entity_kind",
-        )
-    return {
-        "business_id": bid,
-        "entity_kind": kind,
-        "assessable_profit": _amount_value(entry["assessable_profit"], "assessable_profit"),
-        "share": _ratio_value(entry["share"], "share"),
-    }
-
-
-def _validate_pa_parents(entries: Any) -> list[dict]:
-    if not isinstance(entries, list):
-        raise AppError(
-            "E_INPUT_TYPE", "dependent_parents 须为数组", field="dependent_parents"
-        )
-    validated: list[dict] = []
-    for index, entry in enumerate(entries):
-        field = f"dependent_parents[{index}]"
-        if not isinstance(entry, dict):
-            raise AppError("E_INPUT_TYPE", f"{field} 须为对象", field=field)
-        extras = [key for key in entry if key != "parent_id"]
-        if extras:
-            raise AppError(
-                "E_INPUT_EXTRA", f"{field} 含未知字段：{extras[0]}", field=extras[0]
-            )
-        if "parent_id" not in entry:
-            raise AppError(
-                "E_INPUT_MISSING", "受养父母缺少 parent_id", field="parent_id"
-            )
-        parent_id = entry["parent_id"]
-        if not isinstance(parent_id, str) or not parent_id:
-            raise AppError(
-                "E_INPUT_TYPE", "parent_id 须为非空字符串", field="parent_id"
-            )
-        validated.append({"parent_id": parent_id})
-    return validated
-
-
-def _validate_pa_children(entries: Any) -> list[dict]:
-    if not isinstance(entries, list):
-        raise AppError(
-            "E_INPUT_TYPE", "dependent_children 须为数组", field="dependent_children"
-        )
-    validated: list[dict] = []
-    for index, entry in enumerate(entries):
-        field = f"dependent_children[{index}]"
-        if not isinstance(entry, dict):
-            raise AppError("E_INPUT_TYPE", f"{field} 须为对象", field=field)
-        allowed = {"birth_date", "residence"}
-        extras = [key for key in entry if key not in allowed]
-        if extras:
-            raise AppError(
-                "E_INPUT_EXTRA", f"{field} 含未知字段：{extras[0]}", field=extras[0]
-            )
-        child: dict[str, Any] = {}
-        if "birth_date" in entry:
-            child["birth_date"] = _validated_birth_date(entry["birth_date"])
-        if "residence" in entry:
-            child["residence"] = _validate_residence(entry["residence"])
-        validated.append(child)
     return validated
 
 
@@ -1280,10 +775,8 @@ def _validate_stamp_lease_input(inp: Any) -> dict:
 
 # -------------------------------------------------------------- 税项分发
 _TAX_VALIDATORS = {
-    "salaries_tax": validate_salaries_input,
     "profits_tax": _validate_profits_input,
     "property_tax": _validate_property_input,
-    "personal_assessment": _validate_personal_assessment_input,
     "stamp_property": _validate_stamp_property_input,
     "stamp_stock": _validate_stamp_stock_input,
     "stamp_lease": _validate_stamp_lease_input,

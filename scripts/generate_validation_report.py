@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import platform
 import random
@@ -30,8 +31,16 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+# 直接运行 scripts/xxx.py 时 sys.path[0] 是 scripts/，显式把仓库根放到最前，
+# 保证报告脚本核验的是本树 app/（而不是 venv 中的历史可安装副本）。
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from app.api.validation import validate_prepare_body
+from app.config import ENGINE_VERSION
 from app.core.errors import AppError
+from app.core.hashing import bundle_content_hash
 from app.engines.personal_assessment import compare_personal_assessment
 from app.engines.profits import calculate_profits_tax
 from app.engines.property import calculate_property_tax
@@ -42,9 +51,12 @@ from app.engines.stamps.stock import calculate_stock_stamp_duty
 from app.rules.bundle import INITIAL_BUNDLE_CONTENT
 
 REPORT_DATE = "2026-10-13"
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = _REPO_ROOT
 OUTPUT_PATH = ROOT / "docs" / "validation" / "001-engine-io-report.md"
 BUNDLE = INITIAL_BUNDLE_CONTENT
+OWNER_001 = "001"
+OWNER_002 = "002"
+FIXED_BUNDLE_ID = "release-fixed-002"
 
 _AMOUNT_KEYS = (
     "before_reduction",
@@ -86,14 +98,293 @@ class SimItem:
 
 
 # ------------------------------------------------------------------ 通用助手
+def _bundle_hash() -> str:
+    """固定束六字段 canonical 内容 hash（C2.8）。"""
+    return bundle_content_hash(BUNDLE)
+
+
+def _availability_002(year: str) -> dict:
+    """固定束离线核验的显式 AvailabilityContext（005 §2.1）。"""
+    start = int(year[:4])
+    following = f"{start + 1}_{(start + 2) % 100:02d}"
+    available_years = BUNDLE["data"]["allowances"]
+    return {
+        "binding": {
+            "bundle_id": FIXED_BUNDLE_ID,
+            "bundle_hash": _bundle_hash(),
+            "rules_schema_version": BUNDLE["rules_schema_version"],
+            "engine_version": ENGINE_VERSION,
+        },
+        "current": {"year": year, "status": "available", "reason_codes": []},
+        "next": {
+            "year": following,
+            "status": "available" if following in available_years else "missing_rules",
+            "reason_codes": [],
+        },
+    }
+
+
+def _salary_year_002(year: str, income: str, mpf: str, *, provisional_paid: str = "0") -> dict:
+    start = int(year[:4])
+    return {
+        "participants": [{"person_id": "p1", "role": "self"}],
+        "subject_facts": {},
+        "household": {
+            "marriage": [
+                {"from": f"{start}-04-01", "to": f"{start + 1}-04-01", "value": "unmarried"}
+            ],
+            "living_apart": [],
+            "child_nomination": {"person_id": None, "status": "none"},
+        },
+        "relations": [],
+        "financials": {
+            "p1": {
+                "employment_income_nai": income,
+                "mpf_mandatory_contributions": mpf,
+                "has_assessable_salary_income": True,
+                "source_classification": {"salary": "confirmed_in_scope"},
+                "properties": [],
+                "businesses": [],
+                "deduction_items": [],
+            }
+        },
+        "care_payments": [],
+        "claims": [],
+        "assessment": {
+            "basis": "actual",
+            "candidates": ["salary_separate"],
+            "selection": "salary_separate",
+        },
+        "manual_issues": [],
+        "provisional_paid": provisional_paid,
+    }
+
+
 def _single(year: str, income: str, mpf: str) -> dict:
-    """单身受雇人士最小事实集（tests/engines/test_salaries_engine.py 同款）。"""
+    """单身受雇人士最小 v2 事实信封（005 §5.3；显式 context 由 _salary_run 提供）。"""
     return {
         "year_of_assessment": year,
-        "employment_income": income,
-        "mpf_mandatory_contributions": mpf,
-        "married_status": {"value": "single"},
+        "subjects": [{"subject_id": "p1", "birth_date": "1990-01-01"}],
+        "years": {year: _salary_year_002(year, income, mpf)},
+        "hk_presence_days": [],
+        "assumptions": [],
     }
+
+
+def _salary_run(facts: Mapping) -> Mapping:
+    return calculate_salaries_tax(
+        facts, BUNDLE, availability=_availability_002(facts["year_of_assessment"])
+    )
+
+
+def _resident_at_reference() -> list[dict]:
+    return [{"from": "2026-06-01", "to": "2026-06-02", "value": True}]
+
+
+def _v2_property(pid: str, rent: str, *, share: str = "1/1", interest: str = "0") -> dict:
+    return {
+        "property_id": pid,
+        "share": share,
+        "rent_received": rent,
+        "rates_paid_by_owner": {"amount": "0", "agreed": False, "actually_paid": False},
+        "irrecoverable_rent": "0",
+        "deposit_offsets": "0",
+        "mortgage_interest": interest,
+    }
+
+
+def _v2_fin(
+    *,
+    nai: str = "0",
+    mpf: str = "0",
+    ai: bool = False,
+    **overrides: object,
+) -> dict:
+    facts: dict = {
+        "employment_income_nai": nai,
+        "mpf_mandatory_contributions": mpf,
+        "has_assessable_salary_income": ai,
+        "source_classification": {"salary": "confirmed_in_scope"},
+        "properties": [],
+        "businesses": [],
+        "deduction_items": [],
+    }
+    facts.update(overrides)
+    return facts
+
+
+def _v2_household(year: str, *, married: bool, reference: str | None = None) -> dict:
+    start = int(year[:4])
+    window = (f"{start}-04-01", f"{start + 1}-04-01")
+    if not married:
+        return {
+            "marriage": [{"from": window[0], "to": window[1], "value": "unmarried"}],
+            "living_apart": [],
+            "child_nomination": {"person_id": None, "status": "none"},
+        }
+    marriage = [
+        {"from": window[0], "to": window[1], "value": "married", "spouse_id": "p2"}
+    ]
+    apart = [{"from": window[0], "to": window[1], "value": False}]
+    if reference is not None:
+        from datetime import date, timedelta
+
+        reference_end = (date.fromisoformat(reference) + timedelta(days=1)).isoformat()
+        marriage.append(
+            {
+                "from": reference,
+                "to": reference_end,
+                "value": "married",
+                "spouse_id": "p2",
+            }
+        )
+        apart.append({"from": reference, "to": reference_end, "value": False})
+    return {
+        "marriage": marriage,
+        "living_apart": apart,
+        "child_nomination": {"person_id": None, "status": "none"},
+    }
+
+
+def _v2_year(
+    year: str,
+    *,
+    participants: list,
+    subject_facts: dict,
+    financials: dict,
+    assessment: dict,
+    household: dict,
+    provisional_paid: str | None = "0",
+) -> dict:
+    result: dict = {
+        "participants": participants,
+        "subject_facts": subject_facts,
+        "household": household,
+        "relations": [],
+        "financials": financials,
+        "care_payments": [],
+        "claims": [],
+        "assessment": assessment,
+        "manual_issues": [],
+    }
+    if provisional_paid is not None:
+        result["provisional_paid"] = provisional_paid
+    return result
+
+
+def _v2_input(year: str, subjects: list, year_obj: dict) -> dict:
+    return {
+        "year_of_assessment": year,
+        "subjects": subjects,
+        "years": {year: year_obj},
+        "hk_presence_days": [],
+        "assumptions": [],
+    }
+
+
+def _pa_q32_input(*, include_provisional: bool = True) -> dict:
+    year = "2025_26"
+    return _v2_input(
+        year,
+        [
+            {"subject_id": "p1", "birth_date": "1990-01-01"},
+            {"subject_id": "p2", "birth_date": "1992-02-02"},
+        ],
+        _v2_year(
+            year,
+            participants=[
+                {"person_id": "p1", "role": "self"},
+                {"person_id": "p2", "role": "spouse"},
+            ],
+            subject_facts={
+                "p1": {"ordinarily_resident_hk": _resident_at_reference()},
+                "p2": {"ordinarily_resident_hk": _resident_at_reference()},
+            },
+            financials={
+                "p1": _v2_fin(
+                    nai="250000",
+                    ai=True,
+                    has_income_assessable_under_ordinance=True,
+                ),
+                "p2": _v2_fin(
+                    ai=False,
+                    has_income_assessable_under_ordinance=True,
+                    has_assessable_property_income=True,
+                    source_classification={
+                        "salary": "confirmed_in_scope",
+                        "property": "confirmed_in_scope",
+                    },
+                    properties=[_v2_property("h-1", "240000")],
+                ),
+            },
+            household=_v2_household(year, married=True, reference="2026-06-01"),
+            assessment={
+                "basis": "hypothetical",
+                "reference_date": "2026-06-01",
+                "candidates": ["no_pa", "pa_joint"],
+                "selection": "best",
+            },
+            provisional_paid="0" if include_provisional else None,
+        ),
+    )
+
+
+def _pa_pam37_input() -> dict:
+    year = "2025_26"
+    return _v2_input(
+        year,
+        [
+            {"subject_id": "p1", "birth_date": "1990-01-01"},
+            {"subject_id": "p2", "birth_date": "1992-02-02"},
+        ],
+        _v2_year(
+            year,
+            participants=[
+                {"person_id": "p1", "role": "self"},
+                {"person_id": "p2", "role": "spouse"},
+            ],
+            subject_facts={
+                "p1": {"ordinarily_resident_hk": _resident_at_reference()},
+                "p2": {"ordinarily_resident_hk": _resident_at_reference()},
+            },
+            financials={
+                "p1": _v2_fin(
+                    ai=False,
+                    has_income_assessable_under_ordinance=True,
+                    has_assessable_business_income=True,
+                    source_classification={
+                        "salary": "confirmed_in_scope",
+                        "business": "confirmed_in_scope",
+                    },
+                    businesses=[
+                        {
+                            "business_id": "b-1",
+                            "entity_kind": "sole_proprietorship",
+                            "assessable_profit": "480000",
+                            "share": "1/1",
+                        }
+                    ],
+                ),
+                "p2": _v2_fin(
+                    ai=False,
+                    has_income_assessable_under_ordinance=True,
+                    has_assessable_property_income=True,
+                    source_classification={
+                        "salary": "confirmed_in_scope",
+                        "property": "confirmed_in_scope",
+                    },
+                    properties=[_v2_property("h-1", "150000")],
+                ),
+            },
+            household=_v2_household(year, married=True, reference="2026-06-01"),
+            assessment={
+                "basis": "hypothetical",
+                "reference_date": "2026-06-01",
+                "candidates": ["no_pa", "pa_joint"],
+                "selection": "best",
+            },
+        ),
+    )
 
 
 def _paid_rates(amount: str) -> dict:
@@ -241,11 +532,37 @@ def _fmt_amounts(amounts: Mapping[str, object], keys: Sequence[str] = _AMOUNT_KE
     )
 
 
+def _steps(result: Mapping, kind: str) -> list[Mapping]:
+    return [
+        step.get("detail") or {}
+        for step in (result.get("steps") or [])
+        if isinstance(step, Mapping)
+        and step.get("kind") == kind
+        and isinstance(step.get("detail"), Mapping)
+    ]
+
+
 def _scenario(result: Mapping, method: str) -> Mapping:
-    for scenario in result.get("scenarios", []):
-        if scenario.get("method") == method:
+    for scenario in _steps(result, "scenario"):
+        if scenario.get("scenario_id") == method:
             return scenario
-    raise RuntimeError(f"比较结果缺少方案 {method!r}：{result.get('scenarios')!r}")
+    raise RuntimeError(
+        f"比较结果缺少方案 {method!r}："
+        f"{[s.get('scenario_id') for s in _steps(result, 'scenario')]!r}"
+    )
+
+
+def _assessment(result: Mapping, unit_id: str, *, scenario_id: str) -> Mapping:
+    for assessment in _steps(result, "assessment"):
+        if (
+            assessment.get("unit_id") == unit_id
+            and assessment.get("scenario_id") == scenario_id
+        ):
+            return assessment
+    raise RuntimeError(
+        f"比较结果缺少 assessment {unit_id!r}／{scenario_id!r}："
+        f"{[(a.get('unit_id'), a.get('scenario_id')) for a in _steps(result, 'assessment')]!r}"
+    )
 
 
 def _verdict(checks: Sequence[tuple[str, object, object]]) -> tuple[bool, list[str]]:
@@ -311,43 +628,48 @@ def _truncate(text: str, limit: int = 200) -> str:
 
 # ------------------------------------------------------------------ 批次 A：官方示例
 def _a_pam39_q1() -> CheckItem:
-    result = calculate_salaries_tax(_single("2025_26", "240000", "9000"), BUNDLE)
+    result = _salary_run(_single("2025_26", "240000", "9000"))
     amounts = result["amounts"]
     return _make_item(
         name="PAM39 Q1（2025/26）",
-        input_summary="薪俸：240,000／MPF 9,000／single（无暂缴事实）",
+        input_summary="薪俸 v2：240,000／MPF 9,000／全年 unmarried（无下一年事实）",
         expected=(
             "累进 3,940、宽减 3,000、final 940（T2 PAM39 Q1，台账 1.13；"
-            "T1 附表 2/4/43 手算见测试注释）"
+            "T1 附表 2/4/43 手算见测试注释）；下一年事实缺失 → partial、"
+            "next_provisional=null（REQ-9，不回退本年规则）"
         ),
         checks=[
+            ("status", result["status"], "partial"),
             ("before_reduction", amounts["before_reduction"], "3940"),
             ("reduction", amounts["reduction"], "3000"),
             ("final_after_reduction", amounts["final_after_reduction"], "940"),
+            ("next_provisional", amounts["next_provisional"], None),
         ],
         actual=(
             f'status={result["status"]}；'
-            + _fmt_amounts(amounts, ("before_reduction", "reduction", "final_after_reduction"))
+            + _fmt_amounts(amounts, ("before_reduction", "reduction", "final_after_reduction", "next_provisional"))
         ),
         test_name="test_salaries_pam39_q1_final_940",
     )
 
 
 def _a_pam39_q2() -> CheckItem:
-    result = calculate_salaries_tax(_single("2026_27", "480000", "18000"), BUNDLE)
+    result = _salary_run(_single("2026_27", "480000", "18000"))
     amounts = result["amounts"]
     return _make_item(
         name="PAM39 Q2 PST（2026/27）",
-        input_summary="薪俸：480,000／MPF 18,000／single（无暂缴事实）",
+        input_summary="薪俸 v2：480,000／MPF 18,000／全年 unmarried（2027/28 无规则）",
         expected=(
             "PST 35,890；2026/27 无宽减条目 → reduction 0、final 35,890"
-            "（T2 PAM39 Q2，台账 1.13）"
+            "（T2 PAM39 Q2，台账 1.13）；2027/28 缺规则 → partial、"
+            "next_provisional=null（REQ-9，不回退本年规则）"
         ),
         checks=[
+            ("status", result["status"], "partial"),
             ("before_reduction", amounts["before_reduction"], "35890"),
             ("reduction", amounts["reduction"], "0"),
             ("final_after_reduction", amounts["final_after_reduction"], "35890"),
-            ("next_provisional", amounts["next_provisional"], "35890"),
+            ("next_provisional", amounts["next_provisional"], None),
         ],
         actual=(
             f'status={result["status"]}；'
@@ -390,33 +712,37 @@ def _a_property_q7() -> CheckItem:
 
 
 def _a_pa_q32() -> CheckItem:
-    facts = _pa_facts(
-        "2025_26",
-        _person("self", salary="250000"),
-        _person("spouse", properties=[_pa_property("p-1", "240000")]),
+    facts = _pa_q32_input()
+    result = compare_personal_assessment(
+        facts, BUNDLE, availability=_availability_002(facts["year_of_assessment"])
     )
-    result = compare_personal_assessment(facts, BUNDLE)
-    pa = _scenario(result, "personal_assessment")
+    pa = _scenario(result, "pa_joint")
     no_pa = _scenario(result, "no_pa")
-    components = {c["tax_type"]: c["final_after_reduction"] for c in no_pa["components"]}
+    no_pa_salary = _assessment(result, "salary:p1", scenario_id="no_pa")
+    no_pa_property = _assessment(result, "property:h-1:p2", scenario_id="no_pa")
+    pa_amounts = pa["amounts"]
+    no_pa_amounts = no_pa["amounts"]
     return _make_item(
         name="PA Q32（2025/26）",
-        input_summary="已婚两人：本人薪金 250,000；配偶物业租金 240,000（NAV 192,000）",
-        expected="PA 9,920 vs 分开评税 28,800＋0（Q32，T1 台账 1.7）",
+        input_summary="已婚两人 v2：本人薪金 250,000；配偶物业租金 240,000（NAV 192,000）",
+        expected="PA 9,920 vs 分开评税 28,800＋0（Q32，T1 台账 1.7）；PA 恒 partial",
         checks=[
-            ("PA before_reduction", pa["before_reduction"], "12920"),
-            ("PA reduction", pa["reduction"], "3000"),
-            ("PA final_after_reduction", pa["final_after_reduction"], "9920"),
-            ("no_pa final_after_reduction", no_pa["final_after_reduction"], "28800"),
-            ("no_pa salaries 分项", components.get("salaries"), "0"),
-            ("no_pa property 分项", components.get("property"), "28800"),
-            ("best_scenario", result["best_scenario"], "personal_assessment"),
+            ("status", result["status"], "partial"),
+            ("PA before_reduction", pa_amounts["before_reduction"], "12920"),
+            ("PA reduction", pa_amounts["reduction"], "3000"),
+            ("PA final_after_reduction", pa_amounts["final_after_reduction"], "9920"),
+            ("no_pa final_after_reduction", no_pa_amounts["final_after_reduction"], "28800"),
+            ("no_pa salaries 分项", no_pa_salary["amounts"]["final_after_reduction"], "0"),
+            ("no_pa property 分项", no_pa_property["amounts"]["final_after_reduction"], "28800"),
+            ("best_scenario", result["best_scenario"], "pa_joint"),
             ("amounts.final_after_reduction", result["amounts"]["final_after_reduction"], "9920"),
         ],
         actual=(
-            f'PA：before={pa["before_reduction"]}、reduction={pa["reduction"]}、'
-            f'final={pa["final_after_reduction"]}；no_pa：final={no_pa["final_after_reduction"]}'
-            f'（salaries={components.get("salaries")}、property={components.get("property")}）；'
+            f'PA：before={pa_amounts["before_reduction"]}、reduction={pa_amounts["reduction"]}、'
+            f'final={pa_amounts["final_after_reduction"]}；'
+            f'no_pa：final={no_pa_amounts["final_after_reduction"]}'
+            f'（salaries={no_pa_salary["amounts"]["final_after_reduction"]}、'
+            f'property={no_pa_property["amounts"]["final_after_reduction"]}）；'
             f'best={result["best_scenario"]}'
         ),
         test_name="test_pa_q32_example_9920_vs_28800",
@@ -424,41 +750,33 @@ def _a_pa_q32() -> CheckItem:
 
 
 def _a_pam37_ex4() -> CheckItem:
-    facts = _pa_facts(
-        "2025_26",
-        _person(
-            "self",
-            businesses=[
-                {
-                    "business_id": "b-1",
-                    "entity_kind": "sole_proprietorship",
-                    "assessable_profit": "480000",
-                    "share": "1/1",
-                }
-            ],
-        ),
-        _person("spouse", properties=[_pa_property("p-1", "150000")]),
+    facts = _pa_pam37_input()
+    result = compare_personal_assessment(
+        facts, BUNDLE, availability=_availability_002(facts["year_of_assessment"])
     )
-    result = compare_personal_assessment(facts, BUNDLE)
-    pa = _scenario(result, "personal_assessment")
+    pa = _assessment(result, "pa:joint", scenario_id="pa_joint")
+    shares = {
+        entry["person_id"]: entry["ratio"] for entry in pa.get("shares") or []
+    }
     return _make_item(
         name="PAM37 例 4",
-        input_summary="已婚两人：本人独资 480,000；配偶租金 150,000（NAV 120,000）",
+        input_summary="已婚两人 v2：本人独资 480,000；配偶租金 150,000（NAV 120,000）",
         expected=(
             "R 600,000；累进 39,120；宽减 3,000；final 36,120；内部比例 4/5、1/5"
             "（PAM37 例 4，T2 台账 1.13；个人整元不作产品输出）"
         ),
         checks=[
-            ("before_reduction", pa["before_reduction"], "39120"),
-            ("reduction", pa["reduction"], "3000"),
-            ("final_after_reduction", pa["final_after_reduction"], "36120"),
-            ("apportionment_ratios", pa["apportionment_ratios"], {"self": "4/5", "spouse": "1/5"}),
+            ("before_reduction", pa["amounts"]["before_reduction"], "39120"),
+            ("reduction", pa["amounts"]["reduction"], "3000"),
+            ("final_after_reduction", pa["amounts"]["final_after_reduction"], "36120"),
+            ("apportionment_ratios", shares, {"p1": "4/5", "p2": "1/5"}),
             ("amounts.final_after_reduction", result["amounts"]["final_after_reduction"], "36120"),
         ],
         actual=(
-            f'PA：before={pa["before_reduction"]}、reduction={pa["reduction"]}、'
-            f'final={pa["final_after_reduction"]}；'
-            f'ratios={json.dumps(pa["apportionment_ratios"], ensure_ascii=False, sort_keys=True)}'
+            f'PA：before={pa["amounts"]["before_reduction"]}、'
+            f'reduction={pa["amounts"]["reduction"]}、'
+            f'final={pa["amounts"]["final_after_reduction"]}；'
+            f'ratios={json.dumps(shares, ensure_ascii=False, sort_keys=True)}'
         ),
         test_name="test_pa_pam37_example4_joint_rebate_then_ratio_apportion_internal_fractions",
     )
@@ -892,14 +1210,17 @@ def collect_batch_b() -> list[SimItem]:
 
     # 薪俸税 8 条（部分含显式已缴暂缴 → complete；其余 → partial）
     for _ in range(8):
+        year = random.choice(years)
         facts = _single(
-            random.choice(years),
+            year,
             str(random.randrange(120_000, 2_500_001, 1000)),
             str(random.randrange(0, 21_001, 100)),
         )
         if random.random() < 0.5:
-            facts["provisional_paid"] = str(random.randrange(0, 60_001, 500))
-        result = calculate_salaries_tax(facts, BUNDLE)
+            facts["years"][year]["provisional_paid"] = str(
+                random.randrange(0, 60_001, 500)
+            )
+        result = _salary_run(facts)
         items.append(_sim_item("薪俸税（salaries_tax）", facts, result))
 
     # 利得税 6 条（2/3 独资、1/3 法团；两级制资格已确认）
@@ -980,24 +1301,25 @@ def _c_property_two_17s() -> CheckItem:
 
 
 def _c_missing_provisional() -> CheckItem:
-    facts = _pa_facts(
-        "2025_26",
-        _person("self", salary="250000"),
-        _person("spouse", properties=[_pa_property("p-1", "240000")]),
+    facts = _pa_q32_input(include_provisional=False)
+    result = compare_personal_assessment(
+        facts, BUNDLE, availability=_availability_002(facts["year_of_assessment"])
     )
-    del facts["provisional_paid"]
-    result = compare_personal_assessment(facts, BUNDLE)
     amounts = result["amounts"]
     return _make_item(
         name="C3 缺 provisional_paid（partial / balance null）",
-        input_summary="PA：Q32 同款事实但删除 provisional_paid 键（缺失 ≠ 显式零）",
+        input_summary="PA v2：Q32 同款事实但省略 provisional_paid 键（缺失 ≠ 显式零）",
         expected="status=partial；已知 final 9,920；provisional_paid/balance=null；missing_components 含 provisional_paid（REQ-8）",
         checks=[
             ("status", result["status"], "partial"),
             ("final_after_reduction", amounts["final_after_reduction"], "9920"),
             ("provisional_paid", amounts["provisional_paid"], None),
             ("balance", amounts["balance"], None),
-            ("missing provisional_paid", "provisional_paid" in result.get("missing_components", []), True),
+            (
+                "missing provisional_paid",
+                "provisional_paid" in (result.get("missing_components") or []),
+                True,
+            ),
         ],
         actual=(
             f'status={result["status"]}；'
@@ -1026,11 +1348,11 @@ def _c_unsupported_deduction() -> CheckItem:
         )
     )
     salaries_facts = _single("2025_26", "240000", "9000")
-    salaries_facts["deduction_items"] = [
+    salaries_facts["years"]["2025_26"]["financials"]["p1"]["deduction_items"] = [
         {"item_type": "voluntary_mpf_contribution", "amount": "5000"}
     ]
     salaries_code = _expect_error_code(
-        lambda: calculate_salaries_tax(salaries_facts, BUNDLE)
+        lambda: _salary_run(salaries_facts)
     )
     return _make_item(
         name="C4 不支持扣除正数（E_DEDUCTION_UNSUPPORTED）",
@@ -1050,8 +1372,10 @@ def _c_unsupported_deduction() -> CheckItem:
 
 def _c_unknown_eligibility() -> CheckItem:
     facts = _single("2025_26", "240000", "9000")
-    facts["married_status"] = {"value": "unknown"}
-    result = calculate_salaries_tax(facts, BUNDLE)
+    facts["years"]["2025_26"]["household"]["marriage"] = [
+        {"from": "2025-04-01", "to": "2026-04-01", "value": "unknown"}
+    ]
+    result = _salary_run(facts)
     amounts = result["amounts"]
     all_null = all(value is None for value in amounts.values())
     return _make_item(
@@ -1180,11 +1504,20 @@ def build_report(
     batch_a: Sequence[CheckItem],
     batch_b: Sequence[SimItem],
     batch_c: Sequence[CheckItem],
+    *,
+    owner: str = OWNER_001,
 ) -> str:
     lines: list[str] = []
-    lines.append("# 引擎 vs 官方示例 I/O 测试报告（001）")
+    title = "002" if owner == OWNER_002 else "001"
+    lines.append(f"# 引擎 vs 官方示例 I/O 测试报告（{title}）")
     lines.append("")
     lines.append(f"- 报告日期：{REPORT_DATE}")
+    lines.append(f"- Owner：`{owner}`")
+    if owner == OWNER_002:
+        lines.append(
+            "- 性质声明：**固定束核验/模拟，不代表实时规则可用性**；"
+            "脚本 exit 0 不等于官方/实时计算正确性。"
+        )
     lines.append(f"- 生成命令：`{_generation_command()}`")
     try:
         exe_display = Path(sys.executable).resolve().relative_to(ROOT).as_posix()
@@ -1304,22 +1637,83 @@ def build_report(
     return "\n".join(lines)
 
 
-def main() -> int:
+def resolve_output_path(output: str | None, owner: str) -> Path:
+    """Resolve and guard the report destination.
+
+    - owner 001：默认写历史 `docs/validation/001-engine-io-report.md`；显式
+      `--output` 可写到任意非受保护路径（保持历史兼容）。
+    - owner 002：必须显式 `--output`，且必须位于名为 `reports/` 的目录
+      （P3 证据写 EV/reports）；禁止写入仓库 docs/，尤其禁止覆盖 001 报告。
+    """
+    if owner not in (OWNER_001, OWNER_002):
+        raise ValueError(f"未知 owner：{owner!r}")
+    if output is None:
+        if owner != OWNER_001:
+            raise ValueError("owner=002 必须显式提供 --output（EV/reports/...）")
+        return OUTPUT_PATH
+    path = Path(output)
+    if not path.is_absolute():
+        path = ROOT / path
+    path = path.resolve()
+    if owner == OWNER_002:
+        if path == OUTPUT_PATH.resolve():
+            raise ValueError(
+                "owner=002 禁止覆盖 docs/validation/001-engine-io-report.md（001 历史报告）"
+            )
+        docs_root = (ROOT / "docs").resolve()
+        if path == docs_root or docs_root in path.parents:
+            raise ValueError("owner=002 报告不得写入仓库 docs/；P3 证据只能写 EV/reports")
+        if path.parent.name != "reports":
+            raise ValueError(
+                "owner=002 输出必须位于 reports/ 目录（例如 EV/reports/002-*.md）"
+            )
+    return path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="引擎 vs 官方示例 I/O 测试报告（固定束、离线；不联网）"
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "报告输出路径（owner=001 默认 docs/validation/001-engine-io-report.md；"
+            "owner=002 必填且必须位于 EV/reports/）"
+        ),
+    )
+    parser.add_argument(
+        "--owner",
+        choices=(OWNER_001, OWNER_002),
+        default=OWNER_001,
+        help="报告 owner（001 历史兼容；002 仅写 EV/reports，不覆盖 001）",
+    )
+    args = parser.parse_args(argv)
+    try:
+        output = resolve_output_path(args.output, args.owner)
+    except ValueError as exc:
+        print(f"FAIL：{exc}", file=sys.stderr)
+        return 2
+
     batch_a = collect_batch_a()
     batch_b = collect_batch_b()
     batch_c = collect_batch_c()
     _validate_test_names(batch_a, batch_c)
 
-    report = build_report(batch_a, batch_b, batch_c)
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(report, encoding="utf-8", newline="\n")
+    report = build_report(batch_a, batch_b, batch_c, owner=args.owner)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(report, encoding="utf-8", newline="\n")
 
     all_items = list(batch_a) + list(batch_c)
     covered = [item for item in all_items if item.covered]
     failures = [item for item in covered if not item.passed]
     not_covered = [item for item in all_items if not item.covered]
+    try:
+        shown = output.relative_to(ROOT).as_posix()
+    except ValueError:
+        shown = str(output)
     print(
-        f"报告已写入 {OUTPUT_PATH.relative_to(ROOT).as_posix()}："
+        f"报告已写入 {shown}（owner={args.owner}）："
         f"一致 {len(covered) - len(failures)}／不一致 {len(failures)}／"
         f"未覆盖 {len(not_covered)}"
     )

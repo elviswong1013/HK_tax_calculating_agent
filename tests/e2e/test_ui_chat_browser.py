@@ -1,8 +1,8 @@
 """REQ-12/14 UI AI 对话面板浏览器 e2e：未配置态引导＋真实预览＋Escape 关闭。
 
-本文件为需要 Chromium 的 e2e 标记文件（pytest.mark.e2e；浏览器缺失时全部
-SKIP，同 tests/e2e/test_ui_browser.py 惯例）。SSR 结构/接线断言在
-tests/ui/test_ui_chat.py（httpx），本文件补充只能真实浏览器验证的行为：
+本文件为需要 Chromium 的 e2e 标记文件（pytest.mark.e2e；Chromium 不可用＝
+BLOCKED，skip 不计通过；共享隔离/启动见 tests/e2e/conftest.py，006 §6 ①–⑤）。
+SSR 结构/接线断言在 tests/ui/test_ui_chat.py（httpx），本文件补充只能真实浏览器验证的行为：
   - 未配置态面板引导可见（§7 文案＋非密钥 env 名 HKTAX_MODEL_ENDPOINT/
     HKTAX_MODEL_NAME；密钥变量名 HKTAX_MODEL_API_KEY 不上面板——仅
     /settings 与 README 的配置说明，同 tests/ai/test_ai_outbound.py 密钥
@@ -25,93 +25,26 @@ REQ: REQ-12（Annex A §9）＋REQ-14（Annex A §7/§12.5；specs/001 §9）。
 
 from __future__ import annotations
 
-import os
 import re
-import socket
-import threading
-import time
 
 import pytest
 
 pytestmark = [pytest.mark.e2e]
 
-# C4.2 模型三 env：本文件全程「未配置态」——弹出并待服务停止后恢复
+# C4.2 模型三 env：本文件全程「未配置态」——app 构造前弹出，测试后恢复
 _MODEL_ENV_KEYS = ("HKTAX_MODEL_ENDPOINT", "HKTAX_MODEL_NAME", "HKTAX_MODEL_API_KEY")
 
 
-def _free_port() -> int:
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
-
-
-@pytest.fixture(scope="module")
-def base_url(tmp_path_factory):
-    """受控回环启动被测应用（真实 uvicorn；单 worker；临时 DB；模型三 env
-    全清＝未配置态——本文件断言全程不需要模型/网络）。
-
-    同 tests/e2e/test_ui_browser.py 的服务夹具（本目录无 conftest，文件自含）。
-    """
-    import uvicorn
-
-    db_dir = tmp_path_factory.mktemp("e2e-chat")
-    saved_model_env = {key: os.environ.get(key) for key in _MODEL_ENV_KEYS}
-    old = os.environ.get("HKTAX_DB_PATH")
-    os.environ["HKTAX_DB_PATH"] = str(db_dir / "rules.db")
-    for key in _MODEL_ENV_KEYS:
-        os.environ.pop(key, None)
-    try:
-        from app.main import create_app  # 延迟导入：失败原因=缺失 app 行为
-
-        app = create_app()
-        port = _free_port()
-        config = uvicorn.Config(
-            app, host="127.0.0.1", port=port, log_level="warning", workers=1
-        )
-        server = uvicorn.Server(config)
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and not server.started:
-            time.sleep(0.05)
-        assert server.started, "e2e 服务器未能在 15s 内启动（127.0.0.1 受控回环）"
-        yield f"http://127.0.0.1:{port}"
-        server.should_exit = True
-        thread.join(timeout=10)
-    finally:
-        if old is None:
-            os.environ.pop("HKTAX_DB_PATH", None)
-        else:
-            os.environ["HKTAX_DB_PATH"] = old
-        for key, value in saved_model_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+@pytest.fixture
+def e2e_env_overrides() -> dict[str, str | None]:
+    """聊天面板未配置态：三模型 env 在显式 app 构造前弹出（teardown 恢复）。"""
+    return {key: None for key in _MODEL_ENV_KEYS}
 
 
 @pytest.fixture
-def page(base_url):
-    """Chromium 页面；浏览器缺失时整文件 SKIP（安装留给 Green 阶段）。
-
-    动作/expect 超时 5s：发送→预览含一次真实 API 往返（无需模型）。
-    """
-    from playwright.sync_api import expect, sync_playwright
-
-    expect.set_options(timeout=5000)
-    with sync_playwright() as pw:
-        try:
-            browser = pw.chromium.launch()
-        except Exception as exc:  # noqa: BLE001 —— 缺浏览器二进制＝环境未就绪
-            pytest.skip(f"需要 Chromium（Green 阶段运行 playwright install chromium）：{exc}")
-        context = browser.new_context()
-        context.set_default_timeout(5000)
-        pg = context.new_page()
-        yield pg
-        context.close()
-        browser.close()
+def e2e_expect_timeout() -> int:
+    """发送→预览含一次真实 API 往返（无需模型），超时 5s。"""
+    return 5000
 
 
 def test_ui_chat_unconfigured_preview_escape_e2e(page, base_url) -> None:

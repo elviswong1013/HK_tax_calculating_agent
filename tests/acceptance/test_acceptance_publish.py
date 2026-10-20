@@ -1,30 +1,16 @@
-"""REQ-18 发布原子性与门禁隔离证据（终验 REJECTED 缺口 Red）。
+"""REQ-18 publish atomicity + gate isolation evidence (P3-W1a migration).
 
-REQ: REQ-18（发布＝单事务原子指针切换＋audit；门禁在隔离环境运行，
-Annex C C8.7）。
-验收发现锚点（终验 REJECTED）:
-  - app/updater/publisher.publish_update：store.publish（bundle＋publication
-    ＋指针切换）先以独立事务 COMMIT，publish 类 audit 随后另开事务补写——
-    audit 写失败时 bundle/指针/publication 已落库，出现部分状态；
-  - app/updater/testgate.run_gate：gate_environment 四断言为硬编码布尔
-    （{"temp_store": True, "network": False, ...}），无临时 store 路径、
-    无网络调用计数等真实隔离证据。
-规格锚点:
-  - SDD §5 发布行（单事务：插入 bundle＋publication＋指针切换＋audit，无新
-    旧参数混用；任一步失败 → 整体拒绝、零部分状态）；Annex C C5.6/C5.8。
-  - Annex C C8.6/C8.7：发布前验证报告结构含 gate_environment；门禁在临时
-    store 执行——无网络、无用户 session、不写 current pointer。
-期望值来源: 结构性契约（原子性/审计/隔离证据），无金额期望。
-
-【拟名】契约（Green 阶段须按测试实现，不得要求测试改写）:
-  - publish audit 写失败注入 seam：store._connect() 返回代理连接，凡执行
-    INSERT INTO audit_log 且首参数为 "publish" 即注入 sqlite3 失败——
-    publish_update 必须把 publish 类 audit 纳入发布同一事务（或等价保证
-    audit 失败 → 发布整体回滚）。
-  - gate_environment 证据键：temp_store_path（非空绝对路径字符串，指向
-    门禁实际使用的临时 store，须存在于磁盘且 ≠ 现行 store 路径）、
-    network_calls（整数出站调用计数，== 0）、user_session（False）、
-    current_pointer_written（False）——不得以四个硬编码布尔充数。
+Two nodes:
+- test_acceptance_publish_audit_same_transaction:
+  publish_update(purpose=update + baseline id/hash/schema + required binding);
+  publish audit failure injection -> bundle/publications/pointer rollback;
+  baseline replaced -> zero partial write; report self-reduced required ->
+  reject.
+- test_acceptance_testgate_real_isolation_evidence:
+  gate_environment must carry real direct observations (temp store path,
+  network/direct-HTTP/socket/DNS/session/pointer-write counters, observer
+  restore), not injected-seam or hard-coded zeros; a direct-leak negative must
+  be counted and quarantined.
 """
 
 from __future__ import annotations
@@ -35,22 +21,21 @@ from pathlib import Path
 import pytest
 
 from _acc_helpers import (
-    BUDGET_MANIFEST,
-    FACT_CAP_3500,
-    GATE_CASE,
-    REPORT_PUBLISH_OK,
+    AVD_CHANGED,
+    AVD_FULLPATH,
+    B5_REQUIRED_CASE,
+    FACT_AVD_110,
     StrictOutbound,
-    changed_bundle_content,
+    _testonly_avd_source,
+    avd_changed_bundle_content,
+    fake_b5_engine_result,
+    fake_b5_harness_result,
     initial_content,
+    update_report,
 )
 
 
-# ---------------------------------------------------------------------------
-# publish audit 写失败注入（代理连接：仅 publish 类 audit INSERT 失败）
-# ---------------------------------------------------------------------------
 class _AuditFailConnection:
-    """sqlite 连接代理：INSERT INTO audit_log 且 event_type==fail_event 时注入失败。"""
-
     def __init__(self, conn, fail_event: str) -> None:
         self._conn = conn
         self._fail_event = fail_event
@@ -62,7 +47,7 @@ class _AuditFailConnection:
             and params[0] == self._fail_event
         ):
             raise sqlite3.OperationalError(
-                f"注入失败：audit_log 写入错误（event_type={self._fail_event}）"
+                f"injected failure: audit_log write (event_type={self._fail_event})"
             )
         return self._conn.execute(sql, params)
 
@@ -71,12 +56,6 @@ class _AuditFailConnection:
 
 
 def _make_publish_audit_fail_store(db_path):
-    """RuleStore 子类工厂：仅 publish 类 audit 写入失败，其余连接行为不变。
-
-    覆写 _connect 使**一切**经 store 连接的写路径（store.publish／
-    publisher._write_audit／未来把 audit 并入发布事务的实现）都流经代理——
-    生产代码路径真实执行，仅 event_type=="publish" 的 audit_log INSERT 注入失败。
-    """
     from app.rules.store import RuleStore
 
     class _PublishAuditFailStore(RuleStore):
@@ -107,129 +86,295 @@ def _audit_events(db_path, event_type: str) -> list[str]:
 
 
 def test_acceptance_publish_audit_same_transaction(tmp_path) -> None:
-    """publish audit 写失败注入 → bundle／publications／current pointer 全部
-    回滚（单事务原子，零部分状态；不得只补写 audit 而留下已发布新束）。"""
+    from app.rules.store import RuleStore
     from app.updater.publisher import publish_update
+
+    manifest = [dict(_testonly_avd_source()["manifest"])]
+
+    def _publish(store, *, job_id, content, baseline, required_cases, report=None):
+        return publish_update(
+            store,
+            job_id=job_id,
+            content=content,
+            evidence_refs=[FACT_AVD_110],
+            validation_report=report
+            or update_report(
+                store,
+                content=content,
+                manifests=manifest,
+                evidence_refs=[FACT_AVD_110],
+                required_cases=required_cases,
+                changed_paths=[AVD_FULLPATH],
+            ),
+            purpose="update",
+            baseline=baseline,
+            manifests=manifest,
+            required_cases=required_cases,
+        )
 
     db_path = tmp_path / "publish-audit.db"
     store = _make_publish_audit_fail_store(db_path)
-    # 初始束发布走 rule 类 audit（不受注入影响），作为「此前已发布版本」
     store.publish(initial_content(), evidence_refs=[])
     before_pointer = store.current()["bundle_id"]
     pubs_before = _count(db_path, "publications")
     bundles_before = _count(db_path, "rule_bundles")
 
     with pytest.raises(Exception) as excinfo:
-        publish_update(
+        _publish(
             store,
             job_id="job-acc-audit-1",
-            content=changed_bundle_content("3500"),
-            evidence_refs=[],
-            validation_report=REPORT_PUBLISH_OK,
+            content=avd_changed_bundle_content(),
+            baseline=store.current(),
+            required_cases=(B5_REQUIRED_CASE,),
         )
-    # 注入的失败须真实发生（而非其他路径的意外异常冒充）
-    assert "注入失败" in str(excinfo.value), (
-        f"失败须来自 publish audit 写入注入，实际 {excinfo.value!r}"
+    assert "injected failure" in str(excinfo.value), (
+        "failure must come from the publish-audit injection (new signature "
+        f"purpose/baseline/required must be accepted), actual {excinfo.value!r}"
     )
 
-    # —— 零部分状态：bundle／publication／指针／publish audit 一致回滚 ——
     assert store.current()["bundle_id"] == before_pointer, (
-        "REQ-18：publish audit 写失败 → 指针不得切换（单事务原子）；"
-        "当前 audit 在发布事务之外补写，指针已指向新束（部分状态）"
+        "publish audit failure -> pointer must not switch (single transaction)"
     )
-    assert _count(db_path, "publications") == pubs_before, (
-        "REQ-18：audit 写失败 → publications 不得新增（零部分状态）"
+    assert _count(db_path, "publications") == pubs_before
+    assert _count(db_path, "rule_bundles") == bundles_before
+    assert not _audit_events(db_path, "publish")
+
+    # baseline replaced -> CAS failure, zero partial write.
+    normal_path = tmp_path / "publish-baseline.db"
+    normal = RuleStore(normal_path)
+    normal.publish(initial_content(), evidence_refs=[])
+    stale_baseline = normal.current()
+    normal.publish(avd_changed_bundle_content(), evidence_refs=[])
+    current_after_replace = normal.current()
+    pubs_n = _count(normal_path, "publications")
+    bundles_n = _count(normal_path, "rule_bundles")
+    audits_n = _count(normal_path, "audit_log")
+    stale_report = update_report(
+        normal,
+        content=avd_changed_bundle_content("120"),
+        manifests=manifest,
+        evidence_refs=[FACT_AVD_110],
+        required_cases=(B5_REQUIRED_CASE,),
+        changed_paths=[AVD_FULLPATH],
     )
-    assert _count(db_path, "rule_bundles") == bundles_before, (
-        "REQ-18：audit 写失败 → 候选 bundle 不得留库（零部分状态）"
+    stale_report["binding"]["baseline_bundle_id"] = stale_baseline["bundle_id"]
+    stale_report["binding"]["baseline_bundle_hash"] = stale_baseline["bundle_hash"]
+    with pytest.raises(Exception):
+        _publish(
+            normal,
+            job_id="job-acc-audit-cas",
+            content=avd_changed_bundle_content("120"),
+            baseline=stale_baseline,
+            required_cases=(B5_REQUIRED_CASE,),
+            report=stale_report,
+        )
+    assert normal.current() == current_after_replace, (
+        "publish_update must recheck baseline inside the transaction"
     )
-    assert not _audit_events(db_path, "publish"), (
-        "失败路径不得留下任何 publish 类 audit 事件"
+    assert _count(normal_path, "publications") == pubs_n
+    assert _count(normal_path, "rule_bundles") == bundles_n
+    assert _count(normal_path, "audit_log") == audits_n
+
+    # report self-reduces required set -> reject (server recomputes).
+    reduced = update_report(
+        normal,
+        content=avd_changed_bundle_content("130"),
+        manifests=manifest,
+        evidence_refs=[FACT_AVD_110],
+        required_cases=(B5_REQUIRED_CASE, "case_required_extra"),
+        changed_paths=[AVD_FULLPATH],
     )
+    reduced["cases"]["required_case_ids"] = [B5_REQUIRED_CASE]
+    with pytest.raises(Exception):
+        _publish(
+            normal,
+            job_id="job-acc-required-recompute",
+            content=avd_changed_bundle_content("130"),
+            baseline=normal.current(),
+            required_cases=(B5_REQUIRED_CASE, "case_required_extra"),
+            report=reduced,
+        )
+    assert normal.current() == current_after_replace
 
 
-def test_acceptance_testgate_real_isolation_evidence(tmp_path) -> None:
-    """门禁报告须含真实隔离证据：临时 store 路径（存在且≠现行 store）、
-    网络零调用计数（整数）、未写 current pointer——非硬编码布尔。"""
+class _FakeHarnessLike:
+    def run_case(self, case_id: str, **kwargs) -> dict:
+        return fake_b5_harness_result(
+            case_id,
+            AVD_CHANGED,
+            evidence_ref=FACT_AVD_110["fact_id"],
+        )
+
+
+class _FakeEngineLike:
+    def run_case(self, case_id: str, candidate_content: dict, **kwargs) -> dict:
+        return fake_b5_engine_result(case_id, AVD_CHANGED)
+
+
+def test_acceptance_testgate_real_isolation_evidence(
+    tmp_path, monkeypatch, approved_temp_root
+) -> None:
+    import socket
+
+    import httpx
+
+    from app.rules.store import RuleStore
     from app.updater.testgate import run_gate
+    from app.web.security import SessionRegistry
 
     db_path = tmp_path / "gate.db"
-    from app.rules.store import RuleStore
-
     store = RuleStore(db_path)
     store.publish(initial_content(), evidence_refs=[])
     before_pointer = store.current()["bundle_id"]
 
-    outbound = StrictOutbound()  # 门禁内任何出站尝试即 AssertionError（C8.7）
-    harness = _FakeHarnessLike()
-    engine = _FakeEngineLike()
+    manifest = [dict(_testonly_avd_source()["manifest"])]
+    outbound = StrictOutbound()
     report = run_gate(
-        candidate_content=changed_bundle_content("3500"),
+        candidate_content=avd_changed_bundle_content(),
         current_content=initial_content(),
-        manifests=[BUDGET_MANIFEST],
-        independent_facts=[FACT_CAP_3500],
-        required_cases=[GATE_CASE],
-        harness=harness,
-        engine=engine,
+        manifests=manifest,
+        independent_facts=[FACT_AVD_110],
+        required_cases=[B5_REQUIRED_CASE],
+        harness=_FakeHarnessLike(),
+        engine=_FakeEngineLike(),
         outbound=outbound,
+        current_store_db=str(db_path),
+        approved_temp_root=str(approved_temp_root),
     )
-    # 前置自证：独立证据齐备＋逐阶段一致 → 通过（既有绿行为）
     assert report["decision"] == "publish", (
-        f"前置自证失败：齐备候选应通过门禁：{report!r}"
+        f"precondition: complete candidate should pass gate: {report!r}"
     )
 
     ge = report.get("gate_environment") or {}
-
-    # —— 真实证据 1：临时 store 路径（非空字符串、存在于磁盘、≠现行 store）——
     temp_store_path = ge.get("temp_store_path")
     assert isinstance(temp_store_path, str) and temp_store_path.strip(), (
-        "C8.7：gate_environment 须携带真实临时 store 路径 temp_store_path"
-        f"（当前为硬编码布尔）：{ge!r}"
+        f"C8.7: gate_environment needs a real temp_store_path: {ge!r}"
     )
-    assert temp_store_path != str(db_path), (
-        f"临时 store 不得指向现行 store 路径：{temp_store_path!r}"
-    )
-    assert Path(temp_store_path).exists(), (
-        f"临时 store 路径须真实存在（可审计证据）：{temp_store_path!r}"
-    )
+    assert temp_store_path != str(db_path)
+    assert Path(temp_store_path).exists()
 
-    # —— 真实证据 2：网络零调用计数（整数计数，非布尔）——
-    network_calls = ge.get("network_calls")
-    assert (
-        isinstance(network_calls, int) and not isinstance(network_calls, bool)
-    ), (
-        "C8.7：gate_environment 须携带整数网络调用计数 network_calls"
-        f"（当前为硬编码布尔）：{ge!r}"
+    for key in (
+        "network_calls",
+        "direct_http_attempts",
+        "socket_attempts",
+        "dns_attempts",
+        "session_creations",
+        "pointer_write_attempts",
+    ):
+        value = ge.get(key)
+        assert isinstance(value, int) and not isinstance(value, bool), (
+            f"C8.7: gate_environment[{key!r}] must be an integer observation: {ge!r}"
+        )
+        assert value == 0, f"gate must record {key}=0, actual {value}"
+    assert ge.get("observers_restored") is True, (
+        f"gate must restore all observers on exit: {ge!r}"
     )
-    assert network_calls == 0, f"门禁内网络调用必须为 0，实际 {network_calls}"
+    assert ge.get("user_session") is False
+    assert ge.get("current_pointer_written") is False
 
-    # —— 真实证据 3/4：无用户 session、未写 current pointer ——
-    assert ge.get("user_session") is False, f"user_session 须 False：{ge!r}"
-    assert ge.get("current_pointer_written") is False, (
-        f"current_pointer_written 须 False：{ge!r}"
+    assert not outbound.requests
+    assert store.current()["bundle_id"] == before_pointer
+
+    # Negative: direct egress/session/pointer write-restore must be observed.
+    def _blocked_transport(self, request):
+        raise AssertionError("direct HTTPX blocked")
+
+    def _blocked_dns(*args, **kwargs):
+        raise AssertionError("direct DNS blocked")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", _blocked_transport)
+    monkeypatch.setattr(socket, "getaddrinfo", _blocked_dns)
+
+    conn = store._connect()
+    try:
+        pointer_before_probe = conn.execute(
+            "SELECT bundle_id FROM current_pointer WHERE id = 1"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    class _DirectLeakHarness:
+        def __init__(self) -> None:
+            self.registry = SessionRegistry()
+            self.session_count_before = len(self.registry._sessions)
+            self.session_count_after = None
+            self.pointer_seen_after_write = None
+            self.error = None
+
+        def run_case(self, case_id: str, **kwargs):
+            try:
+                httpx.get("https://blocked.invalid/gate-direct")
+            except AssertionError:
+                pass
+            try:
+                socket.getaddrinfo("blocked.invalid", 443)
+            except AssertionError:
+                pass
+            try:
+                self.registry.ensure_session(None)
+            except Exception as exc:  # session must be rejected before side effect
+                self.error = f"session:{type(exc).__name__}"
+            self.session_count_after = len(self.registry._sessions)
+            probe = store._connect()
+            try:
+                try:
+                    probe.execute(
+                        "UPDATE current_pointer SET bundle_id = ? WHERE id = 1",
+                        ("b-tampered",),
+                    )
+                    self.pointer_seen_after_write = probe.execute(
+                        "SELECT bundle_id FROM current_pointer WHERE id = 1"
+                    ).fetchone()[0]
+                    # Cleanup only if the observer wrongly allowed the write.
+                    if self.pointer_seen_after_write == "b-tampered":
+                        probe.execute(
+                            "UPDATE current_pointer SET bundle_id = ? WHERE id = 1",
+                            (pointer_before_probe,),
+                        )
+                except Exception as exc:
+                    self.error = f"pointer:{type(exc).__name__}"
+            finally:
+                probe.close()
+            return fake_b5_harness_result(
+                case_id,
+                AVD_CHANGED,
+                evidence_ref=FACT_AVD_110["fact_id"],
+            )
+
+    leak_harness = _DirectLeakHarness()
+    try:
+        leak_report = run_gate(
+            candidate_content=avd_changed_bundle_content(),
+            current_content=initial_content(),
+            manifests=manifest,
+            independent_facts=[FACT_AVD_110],
+            required_cases=[B5_REQUIRED_CASE],
+            harness=leak_harness,
+            engine=_FakeEngineLike(),
+            outbound=StrictOutbound(),
+            current_store_db=str(db_path),
+            approved_temp_root=str(approved_temp_root),
+        )
+    except Exception as exc:
+        pytest.fail(
+            "direct egress/session/pointer write not caught by gate observer: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    leak_ge = leak_report.get("gate_environment") or {}
+    assert leak_report.get("decision") == "quarantine", (
+        f"direct HTTPX/socket/session/pointer write -> quarantine: {leak_report!r}"
     )
-
-    # —— 外部对账：严格出站零尝试＋现行 store 指针未动 ——
-    assert not outbound.requests, "门禁运行环境不得有任何出站尝试（C8.7）"
+    assert (leak_ge.get("direct_http_attempts") or 0) >= 1
+    assert (leak_ge.get("dns_attempts") or 0) >= 1
+    assert (leak_ge.get("session_creations") or 0) >= 1
+    assert (leak_ge.get("pointer_write_attempts") or 0) >= 1
+    assert leak_harness.session_count_after == leak_harness.session_count_before, (
+        "gate must reject session creation without real registry side effects"
+    )
+    assert leak_harness.pointer_seen_after_write in (None, pointer_before_probe), (
+        "gate must reject pointer write before it becomes visible (write-restore "
+        f"must not be a real write); seen={leak_harness.pointer_seen_after_write!r}"
+    )
     assert store.current()["bundle_id"] == before_pointer, (
-        "门禁不得写现行 current pointer（发布只发生在门禁外）"
+        "observer must reject/restore pointer write-restore; pointer unchanged"
     )
-
-
-class _FakeHarnessLike:
-    """独立参考 harness：与候选一致的对照输出＋T1 独立参数证据。"""
-
-    def run_case(self, case_id: str) -> dict:
-        return {
-            "case_id": case_id,
-            "stages": ["3500"],
-            "output": "3500",
-            "parameter_evidence_ref": FACT_CAP_3500["fact_id"],
-        }
-
-
-class _FakeEngineLike:
-    """候选引擎：与 harness 输出一致（对照通过用）。"""
-
-    def run_case(self, case_id: str, candidate_content: dict) -> dict:
-        return {"case_id": case_id, "stages": ["3500"], "output": "3500"}

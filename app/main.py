@@ -25,16 +25,19 @@ from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from app.ai.adapters import HttpxModelOutbound
+from app.api.consent import ConsentStore
 from app.api.routes import register_routes
 from app.config import DEFAULT_PORT, ENGINE_VERSION, db_path_from_env
 from app.core.errors import AppError
 from app.rules.bundle import INITIAL_BUNDLE_CONTENT
 from app.rules.store import RuleStore
 from app.updater.fetcher import MAX_SNAPSHOT_BYTES
+from app.updater.publisher import publish_update
 from app.updater.reference import (
     REQUIRED_CASES,
     CandidateEngine,
     ReferenceHarness,
+    release_seed_report,
 )
 from app.updater.scheduler import Scheduler
 from app.web.security import (
@@ -100,33 +103,15 @@ _SOURCE_MANIFEST_SPECS: dict[str, dict[str, Any]] = {
                 "anchor_status": "confirmed",
             },
         ],
-        "slots": [
-            {
-                "profile_ID": "salaries_reduction_v1",
-                "fullpath": "salaries.reductions.2025_26.cap",
-                "type": "decimal_string",
-                "unit": "HKD",
-                "constraints": {"min": "0", "max": "1000000", "step": "1"},
-                "anchor": "heading:Salaries Tax Reduction#row:2025/26#col:Cap",
-                "proof_role": "primary_official_page",
-            },
-            {
-                "profile_ID": "salaries_reduction_v1",
-                "fullpath": "salaries.reductions.2024_25.cap",
-                "type": "decimal_string",
-                "unit": "HKD",
-                "constraints": {"min": "0", "max": "1000000", "step": "1"},
-                "anchor": "heading:Salaries Tax Reduction#row:2024/25#col:Cap",
-                "proof_role": "primary_official_page",
-            },
-        ],
-        "fields": [
-            "salaries_reduction_cap_2025_26",
-            "salaries_reduction_cap_2024_25",
-        ],
+        # stop-auto（005 §15.3）：原两条旧 salary 宽减路径移出真实 slots，
+        # 仅保留 anchors 与 STOP_AUTO_OBSERVATIONS 观察描述。
+        "slots": [],
+        "fields": [],
         "evidence_only_fields": [
             "reduction_subject_scope",
             "provisional_boundary",
+            "salaries_reduction_cap_2025_26",
+            "salaries_reduction_cap_2024_25",
         ],
         "legal_state_rules": [],
         "proof_authority": "ird.gov.hk 预算页原文（heading＋行/列标锚定）",
@@ -318,34 +303,14 @@ _SOURCE_MANIFEST_SPECS: dict[str, dict[str, Any]] = {
                 "anchor_status": "confirmed",
             },
         ],
-        "slots": [
-            {
-                "profile_ID": "salaries_reduction_v1",
-                "fullpath": "salaries.reductions.2025_26.cap",
-                "type": "decimal_string",
-                "unit": "HKD",
-                "constraints": {"min": "0", "max": "1000000", "step": "1"},
-                "anchor": "heading:Salaries Tax Reduction#row:2025/26#col:Cap",
-                "proof_role": "independent_counterpart",
-            },
-            {
-                "profile_ID": "salaries_allowances_2026_27_v1",
-                "fullpath": "salaries.allowances.2026_27.basic",
-                "type": "decimal_string",
-                "unit": "HKD",
-                "constraints": {"min": "0", "max": "1000000", "step": "1"},
-                "anchor": (
-                    "heading:Salaries Tax Reduction"
-                    "#row:2026/27 basic allowance#col:Amount"
-                ),
-                "proof_role": "primary_official_page",
-            },
-        ],
-        "fields": [
+        # stop-auto（005 §15.3）：两条旧 salary 路径移出真实 slots。
+        "slots": [],
+        "fields": [],
+        "evidence_only_fields": [
+            "policy_address_scope",
             "salaries_reduction_cap_2025_26_restated",
             "salaries_basic_allowance_2026_27",
         ],
-        "evidence_only_fields": ["policy_address_scope"],
         "legal_state_rules": [],
         "proof_authority": "ird.gov.hk 财政预算案/施政报告官方页原文（heading＋行/列标锚定）",
         "independent_counterpart": "ird_budget 预算页（2025/26 宽减互为独立对应）",
@@ -376,47 +341,14 @@ _SOURCE_MANIFEST_SPECS: dict[str, dict[str, Any]] = {
                 "anchor_status": "confirmed",
             },
         ],
-        "slots": [
-            {
-                "profile_ID": "salaries_allowances_v1",
-                "fullpath": "salaries.allowances.2025_26.basic",
-                "type": "decimal_string",
-                "unit": "HKD",
-                "constraints": {"min": "0", "max": "1000000", "step": "1"},
-                "anchor": (
-                    "heading:Salaries Tax Allowances#row:Basic allowance#col:Amount"
-                ),
-                "proof_role": "primary_official_page",
-            },
-            {
-                "profile_ID": "salaries_allowances_v1",
-                "fullpath": "salaries.allowances.2025_26.married",
-                "type": "decimal_string",
-                "unit": "HKD",
-                "constraints": {"min": "0", "max": "2000000", "step": "1"},
-                "anchor": (
-                    "heading:Salaries Tax Allowances"
-                    "#row:Married person's allowance#col:Amount"
-                ),
-                "proof_role": "primary_official_page",
-            },
-            {
-                "profile_ID": "salaries_mpf_cap_v1",
-                "fullpath": "salaries.mpf_deduction_cap",
-                "type": "decimal_string",
-                "unit": "HKD",
-                "constraints": {"min": "0", "max": "1000000", "step": "1"},
-                "anchor": (
-                    "heading:Salaries Tax Allowances#row:MPF deduction cap#col:Amount"
-                ),
-                "proof_role": "primary_official_page",
-            },
-        ],
-        "fields": [
+        # stop-auto（005 §15.3）：三条旧 salary 路径移出真实 slots。
+        "slots": [],
+        "fields": [],
+        "evidence_only_fields": [
+            "allowance_matrix_scope",
             "salaries_allowances_2025_26",
             "salaries_mpf_deduction_cap",
         ],
-        "evidence_only_fields": ["allowance_matrix_scope"],
         "legal_state_rules": [],
         "proof_authority": "gov.hk 免税额官方页原文（heading＋行/列标锚定）",
         "independent_counterpart": "Cap.112 附表 3B/4 法例文本（互为独立对应）",
@@ -477,6 +409,82 @@ _SOURCE_MANIFEST_SPECS: dict[str, dict[str, Any]] = {
     },
 }
 
+# 005 §15.3/§15.5：六条旧 salary/PA 路径本期全 stop-auto（仅观察）。
+# 七字段 slot 描述从真实 manifest.slots 移出后固定登记于此；来源条目另携带同
+# 内容 observer_slots（观察副本不得进入 classifier/自动写路径）。
+STOP_AUTO_OBSERVATIONS: dict[str, list[dict[str, Any]]] = {
+    "ird_budget": [
+        {
+            "profile_ID": "salaries_reduction_v1",
+            "fullpath": "salaries.reductions.2025_26.cap",
+            "type": "decimal_string",
+            "unit": "HKD",
+            "constraints": {"min": "0", "max": "1000000", "step": "1"},
+            "anchor": "heading:Salaries Tax Reduction#row:2025/26#col:Cap",
+            "proof_role": "primary_official_page",
+        },
+        {
+            "profile_ID": "salaries_reduction_v1",
+            "fullpath": "salaries.reductions.2024_25.cap",
+            "type": "decimal_string",
+            "unit": "HKD",
+            "constraints": {"min": "0", "max": "1000000", "step": "1"},
+            "anchor": "heading:Salaries Tax Reduction#row:2024/25#col:Cap",
+            "proof_role": "primary_official_page",
+        },
+    ],
+    "ird_pa2026": [
+        {
+            "profile_ID": "salaries_allowances_2026_27_v1",
+            "fullpath": "salaries.allowances.2026_27.basic",
+            "type": "decimal_string",
+            "unit": "HKD",
+            "constraints": {"min": "0", "max": "1000000", "step": "1"},
+            "anchor": (
+                "heading:Salaries Tax Reduction"
+                "#row:2026/27 basic allowance#col:Amount"
+            ),
+            "proof_role": "primary_official_page",
+        },
+    ],
+    "govhk_salaries_allowances": [
+        {
+            "profile_ID": "salaries_allowances_v1",
+            "fullpath": "salaries.allowances.2025_26.basic",
+            "type": "decimal_string",
+            "unit": "HKD",
+            "constraints": {"min": "0", "max": "1000000", "step": "1"},
+            "anchor": (
+                "heading:Salaries Tax Allowances#row:Basic allowance#col:Amount"
+            ),
+            "proof_role": "primary_official_page",
+        },
+        {
+            "profile_ID": "salaries_allowances_v1",
+            "fullpath": "salaries.allowances.2025_26.married",
+            "type": "decimal_string",
+            "unit": "HKD",
+            "constraints": {"min": "0", "max": "2000000", "step": "1"},
+            "anchor": (
+                "heading:Salaries Tax Allowances"
+                "#row:Married person's allowance#col:Amount"
+            ),
+            "proof_role": "primary_official_page",
+        },
+        {
+            "profile_ID": "salaries_mpf_cap_v1",
+            "fullpath": "salaries.mpf_deduction_cap",
+            "type": "decimal_string",
+            "unit": "HKD",
+            "constraints": {"min": "0", "max": "1000000", "step": "1"},
+            "anchor": (
+                "heading:Salaries Tax Allowances#row:MPF deduction cap#col:Amount"
+            ),
+            "proof_role": "primary_official_page",
+        },
+    ],
+}
+
 _OUTBOUND_TIMEOUT_SECONDS = 30.0  # SDD §5：出站超时 30s
 _TICK_INTERVAL_SECONDS = 60.0  # 周期 tick；到期/退避判定由 Scheduler 把关（无忙循环）
 
@@ -513,7 +521,16 @@ def _known_source_entries() -> list[dict[str, Any]]:
             "proof_authority": spec["proof_authority"],
             "independent_counterpart": spec["independent_counterpart"],
         }
-        entries.append({"source_id": source_id, "url": url, "manifest": manifest})
+        entries.append(
+            {
+                "source_id": source_id,
+                "url": url,
+                "manifest": manifest,
+                "observer_slots": copy.deepcopy(
+                    STOP_AUTO_OBSERVATIONS.get(source_id) or []
+                ),
+            }
+        )
     return entries
 
 
@@ -585,14 +602,32 @@ def _start_scheduler_threads(scheduler: Scheduler) -> threading.Event:
 
 
 def create_app() -> FastAPI:
-    """构建 ASGI 应用：初始化规则存储＋安全中间件＋路由＋统一错误处理＋调度。"""
+    """构建 ASGI 应用：初始化规则存储＋安全中间件＋路由＋统一错误处理＋调度。
+
+    Annex 005 §15.4：仅在「真空库」（无指针行且零束行）发布随发行固定 v2
+    seed；孤儿束/悬空指针/内容损坏/不兼容旧库一律 fail-closed——不得由任意
+    AppError 触发 reseed（旧行为已退役），app 本体仍保持有效（meta 可用）。
+    """
     store = RuleStore(db_path_from_env())
-    try:
-        store.current()
-    except AppError:
-        store.publish(INITIAL_BUNDLE_CONTENT, evidence_refs=[])
+    if store.is_true_empty():
+        # 005 §15.4/ADR-8：仅真空库允许发行版固定 v2 seed；store 在事务内
+        # 复核 empty-CAS（指针无行＋束零行），任何不符零切换；不做迁移框架。
+        publish_update(
+            store,
+            job_id="release-seed-v2",
+            content=INITIAL_BUNDLE_CONTENT,
+            evidence_refs=[],
+            validation_report=release_seed_report(),
+            purpose="seed",
+            baseline=None,
+            manifests=(),
+            required_cases=REQUIRED_CASES,
+        )
 
     registry = SessionRegistry()
+    # Annex 005 §12.1：middleware prepare reservation 与 routes 共用同一
+    # ConsentStore（create_app 装配、显式传入；不新增服务/端点）。
+    consent_store = ConsentStore()
     # REQ-17/18：生产调度器＝C7.5 官方来源 allowlist＋生产 HTTPX 出站＋生产
     # 门禁绑定（独立参考 harness／候选引擎／已核必需 case 集合，C8.1/C8.4）；
     # tests/ui、tests/acceptance 经 app.state.update_scheduler 接缝注假件覆盖。
@@ -628,13 +663,16 @@ def create_app() -> FastAPI:
     )
     app.state.store = store
     app.state.registry = registry
+    app.state.consent_store = consent_store
     app.state.update_scheduler = scheduler
     # REQ-14 模型出站接缝（C4.6 ⑦段；生产默认真实 HTTPX content=frozen_bytes；
     # 测试经 app.state.model_outbound 注入进程内假件）
     app.state.model_outbound = HttpxModelOutbound()
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
-    app.add_middleware(SecurityMiddleware, registry=registry)
+    app.add_middleware(
+        SecurityMiddleware, registry=registry, consent_store=consent_store
+    )
     register_routes(app, templates)
 
     @app.exception_handler(AppError)

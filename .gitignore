@@ -11,3 +11,6 @@ build/
 .env
 .env.*
 !.env.example
+
+# 本地工作流状态（非交付产物）
+.slim/deepwork/
