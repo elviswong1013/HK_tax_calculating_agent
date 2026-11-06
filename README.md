@@ -2,7 +2,7 @@
 
 本地、确定性、单进程的香港税务／印花税估算工具（FastAPI ＋ Pydantic v2 ＋ Uvicorn ＋ Jinja2 SSR）。
 
-- 设计规格：`specs/001-hk-tax-agent.md`（Approved）
+- 设计规格：`specs/001-hk-tax-agent.md`（Implemented）
 - 技术契约：`docs/design/002-hk-tax-technical-contract.md`（Annex C）
 - 税法语义：`docs/design/003-hk-tax-legal-contract.md`（Annex D）
 
@@ -28,10 +28,11 @@ playwright install chromium           # 仅 e2e 测试需要
 ## 启动
 
 ```powershell
-.venv\Scripts\uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-proxy-headers
+.venv\Scripts\python -m app.main            # 受控入口：默认 127.0.0.1:8000
+# 或：powershell -ExecutionPolicy Bypass -File scripts\run_local.ps1 -Port 8000（先加载 .env.local，再走同一受控入口）
 ```
 
-仅回环绑定（`127.0.0.1` / `localhost`）；非回环绑定拒绝启动；启动器强制单 worker 且不信任代理头。
+受控入口（`app.main.run()`，经 `python -m app.main` 调用）强制：仅回环绑定（`127.0.0.1` / `localhost`，其他 `--host` 拒绝启动）、单 worker、不信任代理头。直接 `uvicorn app.main:app` CLI 虽可运行，但会绕过上述校验，**不是受支持路径**；本服务无身份认证，任何非回环暴露都等于未授权开放全部 API（含服务端模型密钥的使用）。
 
 ## 模型（AI）配置与禁用
 

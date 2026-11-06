@@ -51,12 +51,14 @@ FAILED_ATTEMPTS = [
 ]
 
 TRANSPORT_WORKAROUND = (
-    "可行路径（本脚本实现）：先经本地代理调用 networkcalc.com 的 DNS API 拿到官方站点真实边缘 IP"
+    "历史可行路径（2026-11-06 起改为显式 --insecure-no-sni 选择，默认不启用）：先经本地代理调用 networkcalc.com 的 DNS API 拿到官方站点真实边缘 IP"
     "（腾讯 EdgeOne，本次 43.159.109.162；每次运行时实时解析，失败才回退到本次已核验的记录值），"
     "再以『无 SNI 的 TLS + 原始 Host 头』直连该 IP 抓取官方页面（curl 验证 200/官方字节数一致；"
     "Python 实现见 transport.NoSniHTTPSConnection：wrap_socket(server_hostname=None) 即不发送 SNI）。"
+    "该路径必须关闭证书校验，抓取结果不作官方认证证据（报告中逐条标注 INSECURE）。"
     "Playwright 侧用 context.route('**/*') 拦截浏览器请求，以实时抓回的官方字节 fulfill——浏览器仍以官方"
     " origin 加载并执行原始 HTML/CSS/JS，仅传输段被等效替代；页面内容不落盘、不缓存、无任何改动。"
+    "默认模式（2026-11-06 起）：正常 DNS + SNI + 完整 TLS 证书校验。"
 )
 
 SHIM_NOTE = (
@@ -527,13 +529,29 @@ def main() -> int:
     parser.add_argument("--report", default=str(REPO_ROOT / "docs/validation/002-live-official-calculator-comparison.md"))
     parser.add_argument("--screenshots", default=str(REPO_ROOT / "docs/validation/screenshots"))
     parser.add_argument("--skip-live", action="store_true", help="跳过在线驱动，仅重算引擎并重写报告（调试用）")
+    parser.add_argument(
+        "--insecure-no-sni",
+        action="store_true",
+        help=(
+            "显式启用不安全传输：真实 IP 直连 + 无 SNI + 关闭 TLS 证书校验"
+            "（仅供本机 TUN 代理故障环境，见 transport.py 诊断记录）。"
+            "该模式下抓取结果不作官方认证证据，报告会逐条标注"
+        ),
+    )
+    parser.add_argument(
+        "--local-proxy",
+        default=None,
+        help="不安全模式下解析真实 IP 所经本地代理（如 http://127.0.0.1:17890）；默认不使用代理",
+    )
     args = parser.parse_args()
 
     shot_dir = Path(args.screenshots)
     shot_dir.mkdir(parents=True, exist_ok=True)
 
     cases: list[CaseResult] = []
-    fetcher = OfficialFetcher()
+    fetcher = OfficialFetcher(
+        local_proxy=args.local_proxy, insecure_no_sni=args.insecure_no_sni
+    )
     transport_log: list[str] = []
 
     if not args.skip_live:

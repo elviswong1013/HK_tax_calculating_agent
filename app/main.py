@@ -683,3 +683,17 @@ def run(
 
         runner = uvicorn.run
     runner(host=host, port=port, workers=1, proxy_headers=False)
+
+
+if __name__ == "__main__":  # 受控启动入口（README「启动」章节）：python -m app.main
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="HK Tax Agent 受控启动入口（强制回环绑定、单 worker、不信任代理头）"
+    )
+    parser.add_argument(
+        "--host", default="127.0.0.1", help="绑定地址（仅允许 127.0.0.1 / localhost）"
+    )
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    args = parser.parse_args()
+    run(host=args.host, port=args.port)

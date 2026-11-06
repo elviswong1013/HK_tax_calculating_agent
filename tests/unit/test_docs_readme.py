@@ -79,11 +79,17 @@ def test_readme_install_run_model_toggle() -> None:
     assert "venv" in text, "README 必须含虚拟环境创建说明（§8）"
     assert "pip install -e" in text, "README 必须含可编辑安装说明（§8）"
 
-    # —— 启动（§8：回环＋单 worker＋无代理头）——
-    assert "uvicorn app.main:app" in text, "README 必须含启动命令（§8）"
-    assert "--workers 1" in text, "启动命令必须强制 --workers 1（§8/C5.1）"
-    assert "--no-proxy-headers" in text, "启动命令必须 --no-proxy-headers（C5.1）"
-    assert "--host 127.0.0.1" in text, "启动命令必须回环绑定（C5.1）"
+    # —— 启动（§8：受控入口＋回环＋单 worker＋无代理头；安全审查 H1 修复）——
+    # 受控入口 python -m app.main（app.main.run 强制校验）；直接 uvicorn CLI
+    # 绕过校验，README 必须如实标注为非受支持路径。
+    assert "python -m app.main" in text, "README 必须以受控入口启动（§8/C5.1）"
+    assert "仅回环绑定" in text, "README 必须声明仅回环绑定（C5.1）"
+    assert "拒绝启动" in text, "README 必须声明非回环绑定拒绝启动（C5.1）"
+    assert "单 worker" in text, "README 必须声明强制单 worker（§8/C5.1）"
+    assert "不信任代理头" in text, "README 必须声明不信任代理头（C5.1）"
+    assert "不是受支持路径" in text, (
+        "README 必须警示直接 uvicorn CLI 绕过启动校验、非受支持路径（安全审查 H1）"
+    )
 
     # —— 模型配置与禁用（C4.2：env 密钥；不配置即可纯本地）——
     assert "HKTAX_MODEL_API_KEY" in text, (

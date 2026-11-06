@@ -30,12 +30,11 @@ if (-not (Test-Path $py)) {
     throw "Python venv not found at $py - create it first (.venv)."
 }
 
-# Startup flags per Annex C C1 / SDD section 8: --workers 1 --no-proxy-headers; loopback only.
-$uvicornArgs = @(
-    "-m", "uvicorn", "app.main:app",
-    "--host", "127.0.0.1",
-    "--port", "$Port",
-    "--workers", "1",
-    "--no-proxy-headers"
+# Startup via the controlled entrypoint (app.main.run): loopback-only bind,
+# single worker, no proxy headers are enforced there. --host is refused unless
+# it is 127.0.0.1 / localhost.
+$mainArgs = @(
+    "-m", "app.main",
+    "--port", "$Port"
 )
-& $py @uvicornArgs
+& $py @mainArgs

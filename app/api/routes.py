@@ -313,6 +313,12 @@ def register_routes(app: Any, templates: Any) -> None:
         标「历史估算，非当前重新评估」；不改写原记录。"""
         body = await _read_json(request)
         record_id = body.get("record_id") if isinstance(body, dict) else None
+        if record_id is not None and not isinstance(record_id, str):
+            raise AppError(
+                "E_INPUT_TYPE",
+                "record_id 必须为字符串（C3.1 replay）",
+                field="record_id",
+            )
         registry, sid = _session(request)
         record = registry.get_record(sid, record_id)
         if record is None:
@@ -366,6 +372,12 @@ def register_routes(app: Any, templates: Any) -> None:
         body = await _read_json(request)
         registry, sid = _session(request)
         record_id = body.get("record_id") if isinstance(body, dict) else None
+        if record_id is not None and not isinstance(record_id, str):
+            raise AppError(
+                "E_INPUT_TYPE",
+                "record_id 必须为字符串（C3.1 打印）",
+                field="record_id",
+            )
         record = registry.get_record(sid, record_id)
         if record is None:
             raise StarletteHTTPException(status_code=404, detail="record not found")

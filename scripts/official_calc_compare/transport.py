@@ -47,7 +47,12 @@ EDGE_FALLBACK = {
 
 
 class NoSniHTTPSConnection(http.client.HTTPSConnection):
-    """HTTPSConnection variant that connects to a fixed IP without sending SNI."""
+    """HTTPSConnection variant that connects to a fixed IP without sending SNI.
+
+    仅用于显式开启的 insecure no-SNI 模式（模块 docstring 记录的本机 TUN
+    代理故障绕行）。该模式必须禁用证书校验，因此抓取结果不得视为经认证
+    的官方证据；默认模式不使用本类。
+    """
 
     def __init__(self, real_ip: str, **kw) -> None:
         super().__init__(**kw)
@@ -63,13 +68,31 @@ class NoSniHTTPSConnection(http.client.HTTPSConnection):
 
 
 class OfficialFetcher:
-    """Fetches official pages through the no-SNI path; resolves hosts live."""
+    """Fetches official https pages.
 
-    def __init__(self, local_proxy: str = "http://127.0.0.1:17890", timeout: float = 25.0) -> None:
-        self.local_proxy = local_proxy
+    默认安全模式：正常 DNS + SNI + 完整 TLS 证书校验（ssl 默认上下文）。
+    insecure_no_sni=True 时启用本机 TUN 代理故障环境的已记录绕行（真实
+    边缘 IP 直连 + 无 SNI + 证书校验关闭）；该模式每次抓取都会在 log
+    标注「未认证」，报告据此不得宣称官方认证证据。
+    """
+
+    def __init__(
+        self,
+        timeout: float = 25.0,
+        local_proxy: str | None = None,
+        insecure_no_sni: bool = False,
+    ) -> None:
         self.timeout = timeout
+        self.local_proxy = local_proxy
+        self.insecure_no_sni = bool(insecure_no_sni)
         self._ip_cache: dict[str, str] = {}
         self.log: list[str] = []
+        if self.insecure_no_sni:
+            self.log.append(
+                "INSECURE no-SNI transport enabled: TLS certificate "
+                "verification DISABLED - fetched bytes are NOT authenticated "
+                "official evidence"
+            )
 
     # -- host resolution --------------------------------------------------
     def resolve(self, host: str) -> str:
@@ -114,8 +137,11 @@ class OfficialFetcher:
         path = u.path or "/"
         if u.query:
             path += "?" + u.query
-        ip = self.resolve(host)
-        conn = NoSniHTTPSConnection(ip, host=host, timeout=self.timeout)
+        if self.insecure_no_sni:
+            ip = self.resolve(host)
+            conn = NoSniHTTPSConnection(ip, host=host, timeout=self.timeout)
+        else:
+            conn = http.client.HTTPSConnection(host, timeout=self.timeout)
         try:
             conn.request(
                 "GET",
@@ -134,7 +160,10 @@ class OfficialFetcher:
             headers = {k.lower(): v for k, v in resp.getheaders()}
         finally:
             conn.close()
-        self.log.append(f"GET {url} -> {status} ({len(body)} bytes)")
+        self.log.append(
+            f"GET {url} -> {status} ({len(body)} bytes)"
+            + (" [INSECURE no-SNI, certificate NOT verified]" if self.insecure_no_sni else "")
+        )
         if status in (301, 302, 303, 307, 308) and _redirects > 0:
             loc = headers.get("location")
             if loc:
