@@ -141,6 +141,18 @@ class ConsentStore:
             item["status"] = status
             return dict(item)
 
+    def purge(self, sid: str | None) -> int:
+        """C5.4 清空会话：删除该 sid 的全部同意记录（含冻结的消息内容）。
+
+        仅靠 consent_epoch 递增使旧记录失效会让冻结字节继续留在内存；
+        清空语义要求内容一并移除，避免旧对话随后续授权再次外发。
+        """
+        with self._lock:
+            keys = [key for key in self._items if key[0] == (sid or "")]
+            for key in keys:
+                self._items.pop(key, None)
+            return len(keys)
+
     def _prune_expired_locked(self) -> None:
         now = time.monotonic()
         expired = [

@@ -759,13 +759,20 @@
     });
 
     // —— 清空本次资料：服务端清空＋BroadcastChannel 通知同会话其他标签页同步（§12.6）——
+    // 清空语义（C5.4）：本地与聊天资料一并清除——对话历史、聊天 DOM、输入框、
+    // 待用 AI 预览全部作废；仅当服务端确认清除成功才本地清空并广播。
     const channel = "BroadcastChannel" in window ? new BroadcastChannel("hktax-session") : null;
     function applyClearedLocally() {
       const form = document.getElementById("calc-form");
       if (form) form.reset();
       const summary = document.getElementById("error-summary");
       if (summary) summary.hidden = true;
-      statusRegion.textContent = "本次资料已清空。已下载或打印的外部副本不会被移除。";
+      chatHistory.length = 0; // 对话历史一并清除：旧内容不得随下次授权再次外发
+      pendingPreview = null; // 待用 AI 预览作废
+      while (chatMessages.firstChild) chatMessages.removeChild(chatMessages.firstChild);
+      chatInput.value = "";
+      if (!consentDialog.hidden) closeDialog(consentDialog);
+      statusRegion.textContent = "本次资料已清空（含聊天内容与待发送预览）。已下载或打印的外部副本不会被移除。";
     }
     if (channel) {
       channel.addEventListener("message", (event) => {
@@ -776,13 +783,18 @@
       try {
         const probe = await fetch("/", { method: "GET", credentials: "same-origin" });
         const token = probe.headers.get("X-CSRF-Token") || "";
-        await fetch("/api/v1/session", {
+        const resp = await fetch("/api/v1/session", {
           method: "DELETE",
           credentials: "same-origin",
           headers: { "X-CSRF-Token": token },
         });
+        if (!resp.ok) {
+          announce("清空失败：服务端未确认清除（HTTP " + resp.status + "），本地与聊天资料保持不变。");
+          return;
+        }
       } catch (err) {
-        // 网络失败仍清空本地界面状态；服务端会话随过期失效。
+        announce("清空失败：无法连接服务端，本地与聊天资料保持不变（服务端会话未被清除）。");
+        return;
       }
       applyClearedLocally();
       if (channel) channel.postMessage("session-cleared");

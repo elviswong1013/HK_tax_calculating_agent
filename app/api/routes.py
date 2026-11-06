@@ -377,6 +377,7 @@ def register_routes(app: Any, templates: Any) -> None:
 
     # ------------------------------------------------- AI consent（C4.5–C4.8）
     consent_store = ConsentStore()
+    app.state.consent_store = consent_store  # 测试/运维把手（同 registry/store 模式）
 
     @app.post("/api/v1/ai/consent/preview")
     async def ai_consent_preview(request: Request) -> JSONResponse:
@@ -612,7 +613,8 @@ def register_routes(app: Any, templates: Any) -> None:
     async def session_clear(request: Request) -> dict:
         registry, sid = _session(request)
         epochs = registry.clear_session(sid)
-        return {"status": "cleared", **epochs}
+        consents_purged = consent_store.purge(sid)
+        return {"status": "cleared", "consents_purged": consents_purged, **epochs}
 
     # ------------------------------------------------------------------ pages
     @app.get("/")
