@@ -23,9 +23,15 @@
     <tbody>
       {% for item in items %}
       <tr>
-        <td>{{ item.tax }}</td>
+        <td>
+          {% if item.calc_entry %}
+            {% for entry in item.calc_entry %}<a href="{{ entry }}">{{ item.tax }}{% if item.calc_entry|length > 1 %}（{{ loop.index }}）{% endif %}</a>{% if not loop.last %} {% endif %}{% endfor %}
+          {% else %}
+            {{ item.tax }}
+          {% endif %}
+        </td>
         <td>{{ item.subtopic }}</td>
-        <td>{{ item.support_level }}</td>
+        <td>{% if item.support_level == "computable" %}支持计算{% elif item.support_level == "unsupported" %}不支持（范围外）{% else %}{{ item.support_level }}{% endif %}</td>
         <td>{{ item.authority }}</td>
         <td>{{ item.official_source }}</td>
         <td>{{ item.verified_date }}</td>
