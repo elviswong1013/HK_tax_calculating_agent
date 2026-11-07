@@ -30,10 +30,12 @@ jobs:
       PYTHONIOENCODING: utf-8
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: 安装 Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -57,10 +59,12 @@ jobs:
       PYTHONIOENCODING: utf-8
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: 安装 Python 3.12
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
@@ -80,8 +84,13 @@ jobs:
 
       - name: 上传 docs/validation/ 工件（报告＋截图；002 未产出时至少含 001）
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: validation-reports-py3.12
-          path: docs/validation/
+          # F-10：限定工件范围（仅已验证报告与截图目录），避免把整个目录的
+          # 未来新增文件（可能含 PII）无差别上传。
+          path: |
+            docs/validation/001-engine-io-report.md
+            docs/validation/002-live-official-calculator-comparison.md
+            docs/validation/screenshots/
           if-no-files-found: error

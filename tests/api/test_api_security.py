@@ -106,6 +106,28 @@ def test_host_origin_exact_match_required(raw_client) -> None:
     assert mismatch.status_code == 403, mismatch.text
 
 
+def test_security_headers_present_on_success_and_error(raw_client) -> None:
+    """F-09：成功与拒绝响应均带防点击劫持/MIME 嗅探/Referer 泄漏头。"""
+    expected = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": "frame-ancestors 'none'",
+    }
+
+    ok = raw_client.get("/api/v1/meta/version")
+    assert ok.status_code == 200, ok.text
+    for name, value in expected.items():
+        assert ok.headers.get(name) == value, (name, ok.headers)
+
+    rejected = raw_client.get(
+        "/api/v1/meta/version", headers={"Host": "evil.example:8000"}
+    )
+    assert rejected.status_code == 403, rejected.text
+    for name, value in expected.items():
+        assert rejected.headers.get(name) == value, (name, rejected.headers)
+
+
 def test_sensitive_actions_require_csrf_capability(api) -> None:
     """C5.2/§7：敏感操作（calc prepare、清空会话）必须携带服务器 CSRF 能力。"""
     # —— 无 token → 403 E_CSRF（Origin 合法，隔离 CSRF 维度）——

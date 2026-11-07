@@ -1078,6 +1078,25 @@ _CONTENT_DISPOSITION_ROUTES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/api/v1/report/print$"), "inline"),
 )
 
+# F-09：统一安全响应头——防点击劫持（frame-ancestors/XFO）、MIME 嗅探、
+# Referer 泄漏。CSP 仅声明 frame-ancestors，不限制脚本/样式源，避免破坏
+# 页面既有内联脚本；各头若已由内层显式设置则不覆盖。
+_SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+    (b"content-security-policy", b"frame-ancestors 'none'"),
+)
+
+
+def _with_security_headers(
+    headers: list[tuple[bytes, bytes]],
+) -> list[tuple[bytes, bytes]]:
+    present = {key.lower() for key, _ in headers}
+    return headers + [
+        (name, value) for name, value in _SECURITY_HEADERS if name not in present
+    ]
+
 
 class _CountingReceive:
     """安全批次B（M4）：按实际接收字节累计限流。
@@ -1309,6 +1328,7 @@ class SecurityMiddleware:
                 token = self.registry.csrf_token(sid)
                 if token:
                     response_headers.append((b"x-csrf-token", token.encode("ascii")))
+            response_headers = _with_security_headers(response_headers)
             await send({**message, "headers": response_headers})
 
         try:
@@ -1370,6 +1390,7 @@ class SecurityMiddleware:
             response_headers.append(
                 (name.lower().encode("ascii"), value.encode("ascii"))
             )
+        response_headers = _with_security_headers(response_headers)
         await send(
             {
                 "type": "http.response.start",
@@ -1417,6 +1438,7 @@ class SecurityMiddleware:
             response_headers.append(
                 (name.lower().encode("ascii"), value.encode("ascii"))
             )
+        response_headers = _with_security_headers(response_headers)
         await send(
             {
                 "type": "http.response.start",

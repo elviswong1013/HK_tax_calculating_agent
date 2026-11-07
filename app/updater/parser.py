@@ -78,25 +78,75 @@ LEGAL_STATE_VALUES = frozenset(
     }
 )
 
-_HEADING_RE = re.compile(r"<h([1-6])[^>]*>(.*?)</h\1\s*>", re.IGNORECASE | re.DOTALL)
+_HEADING_OPEN_RE = re.compile(r"<h([1-6])[^>]*>", re.IGNORECASE)
+_HEADING_CLOSE_RES = tuple(
+    re.compile(rf"</h{level}\s*>", re.IGNORECASE) for level in range(7)
+)
 _TABLE_RE = re.compile(r"<table[^>]*>(.*?)</table\s*>", re.IGNORECASE | re.DOTALL)
 _ROW_RE = re.compile(r"<tr[^>]*>(.*?)</tr\s*>", re.IGNORECASE | re.DOTALL)
 _CELL_RE = re.compile(r"<t([dh])[^>]*>(.*?)</t\1\s*>", re.IGNORECASE | re.DOTALL)
 
+# F-07：有界解析——官方页面标题数远低于上限；超限截断防病态输入
+# （上万未闭合 <hN>）造成的 CPU 放大。
+_MAX_SECTIONS = 2000
+# 线性标签剥离：字符类同时排除 '<'，未闭合标签在下一个 '<' 处即失败，
+# 不会像 `<[^>]+>` 那样对每个 '<' 扫描到文末（O(n^2)）。
+_TAG_RE = re.compile(r"<[^<>]*>")
+
 
 def _visible_text(fragment: str) -> str:
     """剥标签＋反转义＋空白折叠（仅用于锚定文本比对/notice 文本）。"""
-    plain = _html.unescape(re.sub(r"<[^>]+>", " ", fragment))
+    plain = _html.unescape(_TAG_RE.sub(" ", fragment))
     return " ".join(plain.split())
+
+
+def _heading_spans(document_text: str) -> list[tuple[int, int, int, int]]:
+    """线性扫描标题区间：[(open 结束, 标题文本起点, 闭合起点, 闭合结束), …]。
+
+    与 `<hN…>.*?</hN >` 的配对语义一致（取首个同级闭合标签），但先一次性
+    收集开启/闭合标签位置再线性配对，未闭合的 `<hN>` 不触发逐次全页回溯
+    （F-07：避免 O(n^2) 的 CPU 放大）。
+    """
+    closes_by_level: dict[int, list[tuple[int, int]]] = {level: [] for level in range(1, 7)}
+    for level in range(1, 7):
+        closes_by_level[level] = [
+            (match.start(), match.end())
+            for match in _HEADING_CLOSE_RES[level].finditer(document_text)
+        ]
+    pointers = {level: 0 for level in range(1, 7)}
+    spans: list[tuple[int, int, int, int]] = []
+    consumed_until = 0
+    for opened in _HEADING_OPEN_RE.finditer(document_text):
+        if len(spans) >= _MAX_SECTIONS:
+            break
+        if opened.start() < consumed_until:
+            continue  # 落在已配对标题的正文内（旧正则不会再次匹配）
+        level = int(opened.group(1))
+        closes = closes_by_level[level]
+        index = pointers[level]
+        while index < len(closes) and closes[index][0] < opened.end():
+            index += 1
+        pointers[level] = index
+        if index >= len(closes):
+            continue
+        close_start, close_end = closes[index]
+        spans.append((opened.end(), opened.end(), close_start, close_end))
+        consumed_until = close_end
+    return spans
 
 
 def _parse_sections(document_text: str) -> list[tuple[str, str]]:
     """按标题切分有界 section：[(heading 文本, section 原文), …]。"""
-    matches = list(_HEADING_RE.finditer(document_text))
+    spans = _heading_spans(document_text)
     sections: list[tuple[str, str]] = []
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(document_text)
-        sections.append((_visible_text(match.group(2)), document_text[match.end():end]))
+    for index, (_open_end, text_start, close_start, close_end) in enumerate(spans):
+        end = spans[index + 1][0] if index + 1 < len(spans) else len(document_text)
+        sections.append(
+            (
+                _visible_text(document_text[text_start:close_start]),
+                document_text[close_end:end],
+            )
+        )
     return sections
 
 

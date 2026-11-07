@@ -17,7 +17,15 @@ if (Test-Path $envFile) {
         $line = $_.Trim()
         if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
             $pair = $line.Split("=", 2)
-            [Environment]::SetEnvironmentVariable($pair[0].Trim(), $pair[1].Trim(), "Process")
+            $name = $pair[0].Trim()
+            # F-12: only app-scoped keys may be injected (never PATH, SSL_CERT_FILE,
+            # PYTHONPATH, NODE_OPTIONS, ... which would let a local file alter the
+            # interpreter/toolchain behaviour).
+            if ($name -notlike "HKTAX_*") {
+                Write-Warning "Ignoring non-HKTAX_ key in .env.local: $name"
+                return
+            }
+            [Environment]::SetEnvironmentVariable($name, $pair[1].Trim(), "Process")
         }
     }
     Write-Host "Loaded .env.local (model config)"
