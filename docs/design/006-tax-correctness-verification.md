@@ -1,11 +1,11 @@
-# 006 — 税负正确性阶段一：验证与历史断言处置附件（Approved 第五稿配套）
+# 006 — 税负正确性阶段一：验证与历史断言处置附件（Implemented（stage1）配套）
 
-Status: Approved
+Status: Implemented（stage1）
 Created: 2026-10-14
-Updated: 2026-10-14（第五稿候选→**Approved**：用户 Gate 2 于 2026-10-14 批准「批准第五稿，进入实施」（仅 stage1；未实现）；按 council 四项合同＋`bounded-closure-design.md` 补 availability 调用闭包/replay 失败优先级、reference/report 显式 context、条件 assessment 与 S7 历史配偶、聊天本地覆盖消费者；**review-plan-r5 影响范围正式 APPROVED（design-only；review4 历史保留）**；全表完整 `repo文件::函数`；002 REQ 命名空间）
-关联: specs/002-tax-correctness-remediation.md（Approved 第五稿）；docs/design/005-tax-correctness-fact-contract.md（Annex 005，Approved）；docs/prd/002-tax-correctness-remediation.md（Approved）；只读来源：`.slim/deepwork/tax-correctness-stage1/{review-plan-r3,gate-p0-r2,corrective-design,supplementary-design,finite-residual-nodes,ui-singleflight}.md` 及既有 `test-migration*`／`report-adapters`／`test-migration-interface-complete.md`
+Updated: 2026-10-20（P3 final5 oracle PASS + acceptor ACCEPTED；stage1 实施关闭；状态 Approved→Implemented（stage1）；历史 OPEN、未运行 live/真实 updater/完整历史断言证明仍保留；本附件不构成完整行为证明；代码/测试/文档语义未变）；2026-10-19（P3-W2 文档同步：§2 追溯 CLI 已实现；§4.5 报告脚本按 002 适配并增加 owner/离线语义；W2 根全量/真实 Chromium 证据见 EV；规范语义未改，仍 Approved / NOT Implemented）；2026-10-14（第五稿候选→**Approved**：用户 Gate 2 于 2026-10-14 批准「批准第五稿，进入实施」（仅 stage1；未实现）；按 council 四项合同＋`bounded-closure-design.md` 补 availability 调用闭包/replay 失败优先级、reference/report 显式 context、条件 assessment 与 S7 历史配偶、聊天本地覆盖消费者；**review-plan-r5 影响范围正式 APPROVED（design-only；review4 历史保留）**；全表完整 `repo文件::函数`；002 REQ 命名空间）
+关联: specs/002-tax-correctness-remediation.md（Implemented（stage1））；docs/design/005-tax-correctness-fact-contract.md（Annex 005，Implemented（stage1））；docs/prd/002-tax-correctness-remediation.md（Approved）；只读来源：`.slim/deepwork/tax-correctness-stage1/{review-plan-r3,gate-p0-r2,corrective-design,supplementary-design,finite-residual-nodes,ui-singleflight}.md` 及既有 `test-migration*`／`report-adapters`／`test-migration-interface-complete.md`
 
-> 状态声明：本附件是**计划**（Red 尚未创建、pytest/浏览器/服务均未运行）。全部处置条目来自只读源码读取与既有文档记录；**未运行任何测试，不构成行为或金额证明**。旧文件头部的 `REQ-n` 标记只属 001 命名空间 provenance，**不构成 002 行为覆盖证据**；追溯脚本 file-level 命中同样不是行为证明。002 只有 REQ-1..REQ-13：所有“新 REQ”列只写 `REQ-1..13`；未受 002 影响的节点写 `002-N/A（001::REQ-n 原样）`。用户 Gate 2 已于 2026-10-14 批准（「批准第五稿，进入实施」，仅 stage1；未实现）；本附件仍为**计划**，不构成运行或验收证据。
+> 状态声明：本附件在批准时为**计划**（Red 尚未创建、pytest/浏览器/服务均未运行）。全部处置条目来自只读源码读取与既有文档记录。**P3-W2（2026-10-19）已执行根全量 pytest（含真实 Chromium e2e）与脚本离线核验，证据见 W2 EV；本附件其余具名 Red／发布证明／观测命令仍为计划或未运行，不构成完整行为证明。** 旧文件头部的 `REQ-n` 标记只属 001 命名空间 provenance，**不构成 002 行为覆盖证据**；追溯脚本 file-level 命中同样不是行为证明。002 只有 REQ-1..REQ-13：所有“新 REQ”列只写 `REQ-1..13`；未受 002 影响的节点写 `002-N/A（001::REQ-n 原样）`。用户 Gate 2 已于 2026-10-14 批准（「批准第五稿，进入实施」，仅 stage1）；**P3 final5 双终验通过（2026-10-20），本附件由 Approved 更新为 Implemented（stage1）；历史 OPEN、未运行 live/真实 updater/完整历史断言证明仍保留；本附件不构成完整行为证明。**
 
 ## 1. 范围与效力
 
@@ -25,7 +25,7 @@ $base  = "C:\Users\elvis\AppData\Local\Temp\opencode\pytest-002-$stamp-$guid"
 .venv\Scripts\python -m pytest -q --basetemp="$base\p3c"
 ```
 
-- 追溯（**拟建新 CLI；当前不存在，不得声称历史支持 002 命名空间**）：`scripts/check_req_traceability.py --spec 002 --require-002 1,2,3,4,5,6,7,8,9,10,11,12,13`。历史脚本只支持 001 的 18-REQ 命名空间；实现后以实际 `--help` 输出为存在证据。
+- 追溯（**P3-W2 已实现**；001 的 `--json` 18 键与 `--require` 语义保留）：`scripts/check_req_traceability.py --spec 002 --require-002 1,2,3,4,5,6,7,8,9,10,11,12,13`。002 命名空间只把显式 `REQ:` 声明作为证据并逐节点列出；旧 001 文件名/注释中的 REQ-n 不混入。实际 `--help` 输出为存在证据。
 - 竞态测试用**确定性屏障**（事件/BARRIER，不靠 sleep 概率）；413/403 必须断言 ASGI receive 调用次数与 Operation ACK，不只断言 HTTP 码。Chromium 缺失 → **blocked**，skip 不计通过。
 - **focused 文件列表为下界、非完整证明**：各阶段完整证据路径以上方目录命令为准；`tests/unit/test_002_report_context.py` 等 report adapter 相关命令在 P3 残差脚本适配时运行，不另设门禁。
 
@@ -220,6 +220,8 @@ $base  = "C:\Users\elvis\AppData\Local\Temp\opencode\pytest-002-$stamp-$guid"
 | `pyproject.toml`（L5–9） | 0.1.0 | 发布时 0.2.0；依赖不动 | REQ-12 |
 | TLS/CI/依赖 | 既有 | 不动；不扩 live 对比 | 002-N/A（原样） |
 
+**P3-W2 实施记录（2026-10-19；不改变本附件计划语义）**：`local_engine.py` 已改为 v2 事实＋显式 `AvailabilityContext`＋固定束 provenance；`run_all.py` 默认离线、逐 case 断言并标注「固定束核验/模拟，不代表实时规则可用性」，`--live` 才 opt-in；`generate_validation_report.py` 增加 `--output/--owner`，owner=002 只能写 `EV/reports/` 且拒绝覆盖 001 历史报告。实际运行证据见 W2 EV；本附件于 2026-10-20 更新为 Implemented（stage1）；该 P3-W2 记录保留为历史，验证计划语义与未运行边界不变。
+
 **第五稿 A 合同补充（reference/report 显式 context；PLANNED）**：
 - `app/updater/reference.py:33–38,57–95,98–109,121–137,199–241`：原 facts、两个 runner、static/candidate 分派；`ReferenceHarness.run_case`（L199–215）仍只给独立固定阶段/期望，不执行生产引擎；`CandidateEngine`（L218–242）domain 回填只允许替换成完整 static baseline 路径，affected candidate 不允许任何回填。
 - `scripts/official_calc_compare/local_engine.py::run_salaries:45–62` 及 `run_all_cases:127–131`；`scripts/generate_validation_report.py` 直接调用点 `:314,337,398,442,902,989,1033,1054`（对应 Q1/Q2/Q32/PAM37、batch B 与三个 C 类 case）；`_single/_person/_pa_facts` 仅作 legacy builders、不得成为默认补资格器；两税改用逐 case 适配。
@@ -321,6 +323,7 @@ $base  = "C:\Users\elvis\AppData\Local\Temp\opencode\pytest-002-$stamp-$guid"
 
 ## 8. 未运行与限制
 
-- 全部测试/浏览器/报告/观测命令均为计划，未运行；无运行时/金额/隔离证据。005 示例与 P/digest 仅做过文档级 stdlib 解析/哈希一致性抽查（见 `sdd-revision-r4.md`），非 pytest、非生产证据。
-- 本清单覆盖命名范围；不构成行为证明，不称“全部运行关闭”；**原 council NEEDS REVISION 保留为历史；第五稿正式审查 APPROVED、有界 council READY、最后 P0 attempt3/3 GATE READY 与用户 Gate 2（2026-10-14，仅 stage1）已归并；未实现，Red/验收证据仍待创建**。
+- 本清单在批准时为计划；P3-W2 与 P3 final5 已执行根全量/浏览器/脚本等（证据见 EV），但以下边界仍未运行/未证明：live 对比、真实 updater、完整历史断言证明。005 示例与 P/digest 仅做过文档级 stdlib 解析/哈希一致性抽查（见 `sdd-revision-r4.md`），非 pytest、非生产证据。
+- **P3-W2 实际执行（2026-10-19）**：根全量 pytest（含真实 Chromium e2e）与脚本离线核验已运行，证据见 W2 EV；本附件其余具名 Red／发布证明／观测命令仍为计划或未运行，不构成行为证明。
+- 本清单覆盖命名范围；不构成行为证明，不称“全部运行关闭”；**原 council NEEDS REVISION 保留为历史；第五稿正式审查 APPROVED、有界 council READY、最后 P0 attempt3/3 GATE READY 与用户 Gate 2（2026-10-14，仅 stage1）已归并；2026-10-20 由 Approved 更新为 Implemented（stage1）；历史 OPEN 保留，本清单不构成完整行为证明**。
 - 用户 Gate 2 已批准（2026-10-14，仅 stage1）；任何“已验证/已通过”表述仍须实际运行证据。

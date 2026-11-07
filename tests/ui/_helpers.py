@@ -48,13 +48,102 @@ def salaries_input(**overrides) -> dict:
     return inp
 
 
+def _year_block(start: int, marriage_value: str, finance: dict) -> dict:
+    return {
+        "participants": [{"person_id": "p1", "role": "self"}],
+        "subject_facts": {},
+        "household": {
+            "marriage": [
+                {
+                    "from": f"{start}-04-01",
+                    "to": f"{start + 1}-04-01",
+                    "value": marriage_value,
+                }
+            ],
+            "living_apart": [],
+            "child_nomination": {"person_id": None, "status": "none"},
+        },
+        "relations": [],
+        "care_payments": [],
+        "claims": [],
+        "financials": {"p1": copy.deepcopy(finance)},
+        "assessment": {
+            "basis": "actual",
+            "candidates": ["salary_separate"],
+            "selection": "salary_separate",
+        },
+        "manual_issues": [],
+    }
+
+
+def _v2_from_v1(inp: dict) -> dict:
+    """v1 事实模型（UI 测试输入）→ Annex 005 v2 最小 Year 容器。
+
+    显式已缴暂缴（会要求 complete 的节点）同时给出紧邻下一年 Year 容器：
+    v2 的 complete 需 ``next_provisional``（005 §8）；仅目标年时为 partial。
+    """
+    year = inp["year_of_assessment"]
+    start = int(year[:4])
+    finance = {
+        "has_assessable_salary_income": True,
+        "source_classification": {"salary": "confirmed_in_scope"},
+        "properties": [],
+        "businesses": [],
+        "deduction_items": [],
+    }
+    for key in ("employment_income", "mpf_mandatory_contributions"):
+        if key in inp:
+            target = "employment_income_nai" if key == "employment_income" else key
+            finance[target] = inp[key]
+    if "deduction_items" in inp:
+        finance["deduction_items"] = inp["deduction_items"]
+    status = inp["married_status"]["value"]
+    marriage_value = "unmarried" if status == "single" else status
+    year_block = _year_block(start, marriage_value, finance)
+    years = {year: year_block}
+    if "provisional_paid" in inp:
+        year_block["provisional_paid"] = inp["provisional_paid"]
+        following = f"{start + 1}_{(start + 2) % 100:02d}"
+        if following in ("2024_25", "2025_26", "2026_27"):
+            years[following] = _year_block(start + 1, marriage_value, finance)
+    return {
+        "year_of_assessment": year,
+        "subjects": [{"subject_id": "p1", "birth_date": "1990-01-01"}],
+        "years": years,
+        "hk_presence_days": [],
+        "assumptions": [],
+    }
+
+
 def prepare_body(inp: dict) -> dict:
-    return {"tax_type": "salaries_tax", "schema_version": "1.0.0", "input": inp}
+    """薪俸 prepare 信封：v2 input＋schema 2.0.0（S002 ADR-3）；v1 形态自动镜像。"""
+    canonical = inp if "years" in inp else _v2_from_v1(inp)
+    return {"tax_type": "salaries_tax", "schema_version": "2.0.0", "input": canonical}
+
+
+def fresh_if_match(api) -> dict[str, str]:
+    """S002 §4.1：每次 prepare 前重取 ``"edit-<epoch>-<revision>"``。"""
+    r = api.get("/api/v1/meta/version")
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    assert "session_epoch" in payload and "input_revision" in payload, (
+        "S002 §4.1：meta/version 须附运行时 session_epoch/input_revision，"
+        f"实际：{payload!r}"
+    )
+    return {
+        "If-Match": (
+            f'"edit-{int(payload["session_epoch"])}-{int(payload["input_revision"])}"'
+        )
+    }
 
 
 def run_prepare(api, inp: dict | None = None) -> dict:
     """prepare → 201；返回负载（含 prepared_id／input_hash／expected_binding）。"""
-    r = api.post("/api/v1/calc/prepare", json=prepare_body(inp or salaries_input()))
+    r = api.post(
+        "/api/v1/calc/prepare",
+        json=prepare_body(inp or salaries_input()),
+        headers=fresh_if_match(api),
+    )
     assert r.status_code == 201, f"prepare 应 201（C3.2.1），实际 {r.status_code}: {r.text}"
     return r.json()
 

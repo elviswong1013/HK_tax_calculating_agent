@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -417,7 +418,366 @@ def initial_content() -> dict:
 
 
 def changed_bundle_content(value: str) -> dict:
-    """仅改 salaries.reductions.2025_26.cap 的候选 content（DATA-only 差异）。"""
+    """仅改共享 data.reductions.2025_26.cap 的候选 content（DATA-only 差异）。
+
+    A8（005 §15.2）：计算/观察统一读顶层 `data.reductions`，工资税区私有副本
+    已退役；测试 helper 不得再写 `data.salaries.reductions`。
+    """
     content = initial_content()
-    content["data"]["salaries"]["reductions"]["2025_26"]["cap"] = value
+    content["data"]["reductions"]["2025_26"]["cap"] = value
     return content
+
+
+# ---------------------------------------------------------------------------
+# P3-W1a：stop-auto／observer 与不受影响路径测试宇宙（矩阵 §3/§4）
+#
+# - 六条旧 salary/PA 路径本期全部 stop-auto（005 §15.3）：真实 manifest.slots
+#   不得含它们；描述移入 app.main.STOP_AUTO_OBSERVATIONS（七字段）。
+# - 八条不受影响路径保留原 manifest 配置（005:856），发布正例/冲突/门禁
+#   负例一律迁到这些路径（D1/D2）。
+# - 发布正例的第二独立源与 B5 required case 仅存在于测试侧，不扩生产
+#   allowlist/required case（D1=a）。
+# ---------------------------------------------------------------------------
+SIX_STOP_AUTO_PATHS: tuple[str, ...] = (
+    "salaries.allowances.2025_26.basic",
+    "salaries.allowances.2025_26.married",
+    "salaries.allowances.2026_27.basic",
+    "salaries.mpf_deduction_cap",
+    "salaries.reductions.2024_25.cap",
+    "salaries.reductions.2025_26.cap",
+)
+
+EIGHT_UNAFFECTED_PATHS: tuple[str, ...] = (
+    "stamps.property.related_conveyance.fixed_duty",
+    "stamps.stock.other_transfer_fixed",
+    "stamps.lease.rent_ceiling_unit",
+    "stamps.stock.effective_from",
+    "property.years.2025_26.standard_rate",
+    "property.repair_allowance_ratio",
+    "profits.two_tier_threshold",
+    "profits.reductions.2025_26.cap",
+)
+
+# 005 §15.3 固定观察值映射（旧路径 → data 相对目标路径；A8 后统一读顶层
+# `data.allowances`/`data.reductions`，不再映射到 salaries 私有副本）。
+STOP_AUTO_TARGETS: dict[str, str] = {
+    "salaries.allowances.2025_26.basic": "allowances.2025_26.basic.amount",
+    "salaries.allowances.2025_26.married": "allowances.2025_26.married.amount",
+    "salaries.allowances.2026_27.basic": "allowances.2026_27.basic.amount",
+    "salaries.mpf_deduction_cap": "allowances.mpf_deduction_cap",
+    "salaries.reductions.2024_25.cap": "reductions.2024_25.cap",
+    "salaries.reductions.2025_26.cap": "reductions.2025_26.cap",
+}
+
+AVD_FULLPATH = "stamps.property.related_conveyance.fixed_duty"
+AVD_BASELINE = "100"
+AVD_CHANGED = "110"
+AVD_CASE = "a_avd_related_fixed"
+AVD_SECOND_URL = "https://www.elegislation.gov.hk/hk/cap117!s29D"
+AVD_SECOND_SOURCE_ID = "testonly_cap117_avd"
+
+# 测试侧 B5 required case（只注入 Scheduler，不写生产 REQUIRED_CASES）。
+B5_REQUIRED_CASE = "case_002_avd_related_fixed"
+FACT_AVD_110 = {
+    "fact_id": "fact_002_cap117_avd_110",
+    "fullpath": AVD_FULLPATH,
+    "value": AVD_CHANGED,
+    "source_id": AVD_SECOND_SOURCE_ID,
+    "url": AVD_SECOND_URL,
+    "anchor": "heading:Cap 117 s.29D - Related Conveyance#row:Fixed duty#col:Amount",
+    "tier": "T1",
+}
+
+
+def slot_descriptor(
+    fullpath: str,
+    *,
+    profile_id: str = "test_profile_v1",
+    unit: str = "HKD",
+    constraints: dict | None = None,
+    anchor: str = "heading:Test#row:Value#col:Amount",
+    proof_role: str = "primary_official_page",
+    slot_type: str = "decimal_string",
+) -> dict:
+    """恰七字段 auto slot 描述（C7.1；测试构图/观察描述共用）。"""
+    return {
+        "profile_ID": profile_id,
+        "fullpath": fullpath,
+        "type": slot_type,
+        "unit": unit,
+        "constraints": constraints or {"min": "0", "max": "10000000", "step": "1"},
+        "anchor": anchor,
+        "proof_role": proof_role,
+    }
+
+
+def manifest_with_slot(fullpath: str, *, source_id: str = "test_source", **kwargs) -> dict:
+    """仅含一个七字段 slot 的合法 manifest（anchor 同时 confirmed）。"""
+    slot = slot_descriptor(fullpath, **kwargs)
+    return {
+        "manifest_schema_version": "1",
+        "source_id": source_id,
+        "url": "https://example.invalid/" + source_id,
+        "artifact_type": "html_table",
+        "parser_id": "test_table_v1",
+        "parser_code_hash": "sha256:" + "99" * 32,
+        "anchors": [
+            {"path_regex": slot["anchor"].split("#")[0], "anchor_status": "confirmed"},
+            {"path_regex": slot["anchor"], "anchor_status": "confirmed"},
+        ],
+        "fields": [fullpath],
+        "slots": [slot],
+        "evidence_only_fields": [],
+        "legal_state_rules": [],
+        "proof_authority": "测试独立来源（仅测试宇宙）",
+        "independent_counterpart": "测试第二独立源（仅测试宇宙）",
+    }
+
+
+AVD_MANIFEST: dict = manifest_with_slot(
+    AVD_FULLPATH,
+    source_id="ird_avd",
+    profile_id="avd_related_conveyance_v1",
+    constraints={"min": "0", "max": "10000", "step": "1"},
+    anchor="heading:AVD - Related Conveyance#row:Fixed duty#col:Amount",
+)
+
+AVD_SECOND_MANIFEST: dict = dict(
+    manifest_with_slot(
+        AVD_FULLPATH,
+        source_id=AVD_SECOND_SOURCE_ID,
+        profile_id="avd_related_conveyance_v1",
+        constraints={"min": "0", "max": "10000", "step": "1"},
+        anchor="heading:Cap 117 s.29D - Related Conveyance#row:Fixed duty#col:Amount",
+        proof_role="independent_counterpart",
+    ),
+    url=AVD_SECOND_URL,
+)
+
+AVD_DOC_100 = (
+    b"<html><body>"
+    b"<h2>AVD - Related Conveyance</h2>"
+    b"<table>"
+    b"<tr><th>Fixed duty</th><th>Amount</th></tr>"
+    b"<tr><td>Fixed duty</td><td>100</td></tr>"
+    b"</table>"
+    b"</body></html>"
+)
+
+AVD_DOC_110 = (
+    b"<html><body>"
+    b"<h2>AVD - Related Conveyance</h2>"
+    b"<table>"
+    b"<tr><th>Fixed duty</th><th>Amount</th></tr>"
+    b"<tr><td>Fixed duty</td><td>110</td></tr>"
+    b"</table>"
+    b"</body></html>"
+)
+
+AVD_SECOND_DOC_100 = (
+    b"<html><body>"
+    b"<h2>Cap 117 s.29D - Related Conveyance</h2>"
+    b"<table>"
+    b"<tr><th>Fixed duty</th><th>Amount</th></tr>"
+    b"<tr><td>Fixed duty</td><td>100</td></tr>"
+    b"</table>"
+    b"</body></html>"
+)
+
+AVD_SECOND_DOC_110 = (
+    b"<html><body>"
+    b"<h2>Cap 117 s.29D - Related Conveyance</h2>"
+    b"<table>"
+    b"<tr><th>Fixed duty</th><th>Amount</th></tr>"
+    b"<tr><td>Fixed duty</td><td>110</td></tr>"
+    b"</table>"
+    b"</body></html>"
+)
+
+
+def avd_changed_bundle_content(value: str = AVD_CHANGED) -> dict:
+    """仅改不受影响 AVD related_conveyance.fixed_duty 的候选内容。"""
+    content = initial_content()
+    content["data"]["stamps"]["property"]["related_conveyance"]["fixed_duty"] = value
+    return content
+
+
+def _fake_subcase_input_sha256(payload: Any) -> str:
+    from app.core.hashing import canonical_json_bytes
+
+    return (
+        "sha256:"
+        + hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+    )
+
+
+def _fake_b5_subcase_entries(
+    plan_case_id: str,
+    value: Any,
+    *,
+    actual: bool,
+    evidence_ref: str | None = None,
+) -> list[dict]:
+    """Strict-gate fixture entries for a production ``B5_CASES`` plan.
+
+    The fake reference/engine pair is kept internally consistent (same input,
+    expected, actual, passed=True, execution receipt) so a strict subcase gate
+    does not replace the test's intended quarantine reason.
+    """
+    from app.updater.reference import B5_CASES
+
+    plan = B5_CASES[plan_case_id]
+    rendered = str(value)
+    entries: list[dict] = []
+    for subcase in plan.get("subcases") or []:
+        expected = copy.deepcopy(dict(subcase["expected"]))
+        if "fixed_duty" in expected:
+            expected["fixed_duty"] = rendered
+        entry = {
+            "subcase_id": str(subcase["subcase_id"]),
+            "input": copy.deepcopy(dict(subcase["input"])),
+            "expected": expected,
+        }
+        if actual:
+            entry.update(
+                {
+                    "actual": copy.deepcopy(expected),
+                    "passed": True,
+                    "receipt": {
+                        "subcase_id": str(subcase["subcase_id"]),
+                        "engine": "test:fake-b5",
+                        "input_sha256": _fake_subcase_input_sha256(
+                            dict(subcase["input"])
+                        ),
+                    },
+                }
+            )
+        elif evidence_ref is not None:
+            entry["parameter_evidence_ref"] = evidence_ref
+        entries.append(entry)
+    return entries
+
+
+def b5_harness_result(
+    case_id: str,
+    value: Any = AVD_CHANGED,
+    *,
+    plan_case_id: str = "a_avd_related_fixed",
+    evidence_ref: str | None = None,
+) -> dict:
+    """Fake ReferenceHarness result with strict-gate subcase expectations."""
+    entries = _fake_b5_subcase_entries(
+        plan_case_id,
+        value,
+        actual=False,
+        evidence_ref=evidence_ref,
+    )
+    result = {
+        "case_id": case_id,
+        "subcase_ids": [entry["subcase_id"] for entry in entries],
+        "stages": [str(value)],
+        "output": str(value),
+        "subcase_results": entries,
+    }
+    if evidence_ref is not None:
+        result["parameter_evidence_ref"] = evidence_ref
+    return result
+
+
+def b5_engine_result(
+    case_id: str,
+    value: Any = AVD_CHANGED,
+    *,
+    plan_case_id: str = "a_avd_related_fixed",
+) -> dict:
+    """Fake CandidateEngine result with strict-gate subcase actuals/receipts."""
+    entries = _fake_b5_subcase_entries(
+        plan_case_id,
+        value,
+        actual=True,
+    )
+    return {
+        "case_id": case_id,
+        "subcase_ids": [entry["subcase_id"] for entry in entries],
+        "stages": [str(value)],
+        "output": str(value),
+        "subcase_results": entries,
+    }
+
+
+def empty_b5_subcase_fields() -> dict:
+    """Explicit empty subcase evidence for legacy (non-``B5_CASES``) fake cases."""
+    return {"subcase_ids": [], "subcase_results": []}
+
+
+def budget_manifest_without_auto_slots() -> dict:
+    """真实 salary manifest 视图：移除全部旧 auto slots（stop-auto）。"""
+    manifest = copy.deepcopy(BUDGET_MANIFEST)
+    manifest["slots"] = []
+    manifest["fields"] = []
+    return manifest
+
+
+def observer_sources() -> list[dict]:
+    """两源 allowlist，其中 ird_budget 携带 stop-auto observer 描述。
+
+    observer_slots 是来源条目键（不是 manifest 字段）；真实 manifest.slots
+    保持为空（005:852/855）。
+    """
+    sources = base_sources()
+    sources[0]["manifest"] = budget_manifest_without_auto_slots()
+    sources[0]["observer_slots"] = [copy.deepcopy(BUDGET_MANIFEST["slots"][0])]
+    return sources
+
+
+def avd_sources() -> list[dict]:
+    """不受影响路径的正例宇宙：生产同形主源＋测试侧第二独立源。"""
+    return [
+        {"source_id": "ird_avd", "url": "https://www.ird.gov.hk/eng/faq/avd.htm",
+         "manifest": copy.deepcopy(AVD_MANIFEST)},
+        {"source_id": AVD_SECOND_SOURCE_ID, "url": AVD_SECOND_URL,
+         "manifest": copy.deepcopy(AVD_SECOND_MANIFEST)},
+    ]
+
+
+def avd_documents(primary: str = AVD_BASELINE, second: str = AVD_BASELINE) -> dict:
+    return {
+        "https://www.ird.gov.hk/eng/faq/avd.htm": (
+            AVD_DOC_110 if primary == AVD_CHANGED else AVD_DOC_100
+        ),
+        AVD_SECOND_URL: (
+            AVD_SECOND_DOC_110 if second == AVD_CHANGED else AVD_SECOND_DOC_100
+        ),
+    }
+
+
+def observer_pending_rows(store) -> list[tuple[str, str, str]]:
+    """直接读取 observer_pending 状态行（source_id,state,period）。"""
+    conn = store._connect()
+    try:
+        return [
+            (str(row[0]), str(row[1]), str(row[2] or ""))
+            for row in conn.execute(
+                "SELECT source_id, state, period FROM updater_source_states"
+                " WHERE state LIKE 'observer_pending:%' ORDER BY rowid"
+            )
+        ]
+    finally:
+        conn.close()
+
+
+def observer_meta(store, source_id: str, period: str, path: str):
+    """读取 updater_meta 的 observer 详情（缺失 → None）。"""
+    import json
+
+    key = f"observer_pending/{source_id}/{period}/{path}"
+    conn = store._connect()
+    try:
+        row = conn.execute(
+            "SELECT value_json FROM updater_meta WHERE key = ?", (key,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return json.loads(row[0])

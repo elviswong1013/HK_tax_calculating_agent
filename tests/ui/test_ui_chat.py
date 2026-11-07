@@ -78,6 +78,7 @@ from _helpers import (
     complete_calc,
     fetch_asset,
     fixed_width_violations,
+    prepare_body,
     salaries_input,
 )
 
@@ -576,14 +577,15 @@ def test_ui_chat_tool_result_rendered(chat) -> None:
         "模型返回内容不得以 HTML 渲染（§12.5；一律 textContent）"
     )
 
-    # —— 面板同一轮次：propose_input（只读建议）＋含金额的自由文本 ——
+    # —— 面板同一轮次：propose_input（完整 HTTP 信封）＋含金额的自由文本 ——
     free_text_with_amount = (
         "根據我的計算，你最終應繳稅款 1 元。建議按以下輸入重新確認。"
     )
+    envelope = prepare_body(salaries_input(provisional_paid="0"))
     chat.outbound.script = [
         _wire_tool_calls_body(
             [{"id": "call_p1", "name": "propose_input",
-              "arguments": {"input": salaries_input()}}],
+              "arguments": {"input": envelope}}],
             content=free_text_with_amount,
         )
     ]
@@ -601,11 +603,34 @@ def test_ui_chat_tool_result_rendered(chat) -> None:
     )
     entry = results[0]
     assert entry["name"] == "propose_input" and entry["outcome"] == "executed", (
-        f"propose_input 引用合法参数必须执行（C3.6 只读建议），实际 {entry!r}"
+        f"propose_input 引用完整合法信封必须执行（005:915），实际 {entry!r}"
     )
-    assert entry["result"]["proposed_input"] == salaries_input(), (
-        "拟议输入必须原样回带（渲染「待你确认」建议的数据来源）"
-    )
+    assert entry["note"] == "read_only_checked"
+    assert entry["needs_confirmation"] is False
+    assert entry["error"] is None
+    result = entry["result"]
+    assert set(result) == {
+        "proposal",
+        "canonical_input_hash",
+        "expected_binding",
+        "status",
+        "questions",
+        "missing_components",
+    }, sorted(result)
+    assert result["proposal"] == {
+        "tax_type": "salaries_tax",
+        "schema_version": "2.0.0",
+        "input": envelope["input"],
+    }
+    assert result["status"] == "checked"
+    assert result["questions"] == [] and result["missing_components"] == []
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", result["canonical_input_hash"])
+    assert set(result["expected_binding"]) == {
+        "bundle_id",
+        "bundle_hash",
+        "rules_schema_version",
+        "engine_version",
+    }
     assert payload.get("content") == free_text_with_amount, (
         "模型自由文本原样保留（不采信其中金额）"
     )

@@ -105,7 +105,16 @@ def test_acceptance_records_steps_nonempty_all_engines(make_acc) -> None:
     # —— 六个非薪俸税执行目标：complete 记录步骤非空 ——
     for tax_type, target in _NON_SALARIES_TARGETS:
         payload = _drive(acc.api, tax_type, minimal_facts(tax_type), target)
-        if payload.get("status") != "complete":
+        # 006:81／Approved §10 ADR-10：PA 恒 partial，仍须执行完整 steps
+        # 检查；其余五税保持 complete 前置。
+        if tax_type == "personal_assessment":
+            if payload.get("status") != "partial":
+                problems.append(
+                    f"{tax_type}: PA v2 状态须恒为 partial（006:81/ADR-10），"
+                    f"实际 {payload.get('status')!r}"
+                )
+                continue
+        elif payload.get("status") != "complete":
             problems.append(
                 f"{tax_type}: 最小合法事实应 complete（前置自证），实际 "
                 f"{payload.get('status')!r}"

@@ -19,11 +19,34 @@ from __future__ import annotations
 from typing import Any
 
 import anyio
-from httpx import ASGITransport, ByteStream
+from httpx import ASGITransport, AsyncByteStream, ByteStream
+
+
+class _SyncBodyAsAsync(AsyncByteStream):
+    """同步迭代体（如生成器 content）→ async 流桥（httpx 0.28 sync Client）。
+
+    httpx 0.28 的 ASGITransport.handle_async_request 断言 request.stream 为
+    AsyncByteStream；同步 Client 配同步生成器 content 时为同步流。本包装在
+    portal 事件循环内逐块拉取（生成器为纯同步产出，无阻塞）。
+    """
+
+    def __init__(self, sync_stream: Any) -> None:
+        self._sync_stream = sync_stream
+
+    async def __aiter__(self):
+        for chunk in self._sync_stream:
+            yield chunk
+
+    async def aclose(self) -> None:
+        close = getattr(self._sync_stream, "close", None)
+        if close is not None:
+            close()
 
 
 async def _run_and_buffer(transport: ASGITransport, request: Any) -> Any:
     """在事件循环内执行既有 async 处理并完整缓冲响应体。"""
+    if not isinstance(request.stream, AsyncByteStream):
+        request.stream = _SyncBodyAsAsync(request.stream)
     response = await transport.handle_async_request(request)
     await response.aread()
     response.stream = ByteStream(response.content)  # 同步/异步双协议流

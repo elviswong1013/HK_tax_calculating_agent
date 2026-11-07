@@ -100,6 +100,32 @@ class AiHarness:
         return sid
 
 
+class _FakeUpdateScheduler:
+    """更新调度器接缝假件（W-L：真实 Scheduler 出站被安全守卫拒绝）。
+
+    `ai_offline` 的 `test_local_calc_without_model` 需验证「模型未配置不阻断
+    本地 update check」；测试环境禁止真实调度/文档出站，故按 tests/ui 既有
+    `app.state.update_scheduler` 接缝模式注入进程内假件（不触网、不启线程）。
+    """
+
+    def __init__(self) -> None:
+        self._job = {
+            "job_id": "job-ai-offline-fake",
+            "kind": "manual",
+            "status": "succeeded",
+            "in_progress": False,
+        }
+
+    def trigger_manual(self) -> dict:
+        return dict(self._job)
+
+    def status(self) -> dict:
+        return {"active_job": None, "sources": [], "publish_outcome": None}
+
+    def availability(self, period: str) -> dict:
+        return {"mode": "ok", "notice": None, "states": []}
+
+
 def _build_app(tmp_path, monkeypatch, *, with_model_env: bool):
     monkeypatch.setenv("HKTAX_DB_PATH", str(tmp_path / "rules.db"))
     for var in (MODEL_ENDPOINT_ENV, MODEL_NAME_ENV, MODEL_API_KEY_ENV):
@@ -133,5 +159,7 @@ def ai(tmp_path, monkeypatch):
 def ai_offline(tmp_path, monkeypatch):
     """模型未配置（三 env 全清除；C3.7 E_MODEL_UNCONFIGURED 态）。"""
     app, fake, client = _build_app(tmp_path, monkeypatch, with_model_env=False)
+    # W-L：真实 scheduler 出站被禁；update check 接缝用进程内假件（不触网）。
+    app.state.update_scheduler = _FakeUpdateScheduler()
     yield AiHarness(app, AiApi(client), fake)
     client.close()

@@ -1,13 +1,13 @@
 # 004 — 税负正确性阶段一：薪俸税家庭与资格 UI 契约
 
-结论：在既有薪俸税工作台内增设渐进披露的家庭／资格输入、明确未知与缺资料状态，并沿用现有确认、结果及记录模式；本文件 Status 为 Approved（用户 Gate 2 2026-10-14，仅 stage1），仍为设计契约、不构成实现或运行证据。
+结论：在既有薪俸税工作台内增设渐进披露的家庭／资格输入、明确未知与缺资料状态，并沿用现有确认、结果及记录模式；本文件 Status 为 Implemented（stage1；用户 Gate 2 2026-10-14 批准，2026-10-20 P3 final5 双终验关闭），仍为设计契约、不构成完整行为或运行证据。
 
-Status: Approved
+Status: Implemented（stage1）
 Created: 2026-10-14
-Updated: 2026-10-14
+Updated: 2026-10-20（P3 final5 oracle PASS + acceptor ACCEPTED；stage1 实施关闭；状态 Approved→Implemented（stage1）；设计内容与视觉意图不变；历史 OPEN/视觉 B/D/F 保留；代码/测试/文档语义未变）；2026-10-19（P3-W2 文档同步：已截取 375px／1280px／200% 视觉证据供 designer 复核；视觉复核未完成，不宣称 PASS；状态仍 Approved / NOT Implemented）；2026-10-14
 关联：`docs/prd/002-tax-correctness-remediation.md`（Approved，Gate 1）；`docs/design/001-hk-tax-ui.md`（Approved，Annex A 基线）
 
-> 本文件只描述获批新需求 delta，不修改、替代或重述 Approved Annex A。用户 Gate 2 已于 2026-10-14 批准（「批准第五稿，进入实施」，仅 stage1 P1→P2→P3 严格 TDD）；实现获授权，但本文件仍为设计契约、非运行证据；无依赖/服务/秘密等额外授权。
+> 本文件只描述获批新需求 delta，不修改、替代或重述 Approved Annex A。用户 Gate 2 已于 2026-10-14 批准（「批准第五稿，进入实施」，仅 stage1 P1→P2→P3 严格 TDD）；本文件于 2026-10-20 由 Approved 更新为 Implemented（stage1，P3 final5 双终验）；设计内容与视觉意图不变，Implemented 仅表示 stage1 验收关闭；历史 OPEN/视觉 B/D/F 保留；仍为设计契约、非完整运行证据；无依赖/服务/秘密等额外授权。
 
 ## 1. 范围、边界与设计原则
 
@@ -247,6 +247,6 @@ prepare 校验需缺资料时：
 | AC-10 | 结果、步骤、记录保持一致；未知不作零，输入变更使当前结果失效而保留历史 |
 | AC-11 | 可定位补资料、编辑即时服务器失效、聊天结构化提案采用及安全流程沿用；可访问性与响应式 |
 
-协调者负责与 Approved PRD 全覆盖、oracle 与七税调用方对账。本稿依事实与技术提案把交互具体化；两份提案已随第五稿获用户 Gate 2（2026-10-14，仅 stage1）批准进入实施，仍不构成法律意见或运行验收。当前保留窄问题为日历月月末六个月、未核亲属定义及死亡／争议／选择程序；这些个案定位人工，不把整个普通类别标不支持。ERCE 仅保留既有计算类型，声明 eligibility 不覆盖原始事实判定；未知（包括零额）需追问。其他阶段2类型的正数不得计入，未支持类型的显式零额占位沿旧兼容路径，不因此提供新扣除控件。PA 仍 API-only。其余 profile、candidate、trace、HTTP 协议及 AI 信封按 `technical-design.md` 的具体提案对齐，已随用户 Gate 2（2026-10-14，仅 stage1）批准。法律含义如有疑问应提问，不自行补规则。实现与验证责任自 2026-10-14 批准后启动（P1→P3；未实现）。
+协调者负责与 Approved PRD 全覆盖、oracle 与七税调用方对账。本稿依事实与技术提案把交互具体化；两份提案已随第五稿获用户 Gate 2（2026-10-14，仅 stage1）批准进入实施，仍不构成法律意见或运行验收。当前保留窄问题为日历月月末六个月、未核亲属定义及死亡／争议／选择程序；这些个案定位人工，不把整个普通类别标不支持。ERCE 仅保留既有计算类型，声明 eligibility 不覆盖原始事实判定；未知（包括零额）需追问。其他阶段2类型的正数不得计入，未支持类型的显式零额占位沿旧兼容路径，不因此提供新扣除控件。PA 仍 API-only。其余 profile、candidate、trace、HTTP 协议及 AI 信封按 `technical-design.md` 的具体提案对齐，已随用户 Gate 2（2026-10-14，仅 stage1）批准。法律含义如有疑问应提问，不自行补规则。实现与验证责任自 2026-10-14 批准后启动（P1→P3；2026-10-20 stage1 实施关闭，Implemented）。
 
-本阶段未执行浏览器、构建或测试；设计场景为后续可执行验收计划。
+P3-W2 已执行真实 Chromium e2e 与 375px／1280px／200% 视觉截图（证据见 W2 EV）；视觉复核仍待 designer，不构成视觉 PASS（历史 OPEN/视觉 B/D/F 保留）；本文件状态于 2026-10-20 更新为 Implemented（stage1）。其余设计场景仍为后续可执行验收计划。

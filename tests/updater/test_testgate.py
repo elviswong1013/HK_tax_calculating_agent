@@ -48,13 +48,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from _fakes import (
-    BUDGET_MANIFEST,
-    FACT_CAP_3500,
-    GATE_CASE,
+    AVD_CHANGED,
+    AVD_FULLPATH,
+    AVD_MANIFEST,
+    B5_REQUIRED_CASE,
+    FACT_AVD_110,
     FakeEngine,
     FakeHarness,
     StrictOutbound,
-    changed_bundle_content,
+    avd_changed_bundle_content,
+    empty_b5_subcase_fields,
     initial_content,
     seed_published_store,
 )
@@ -67,78 +70,115 @@ def _run_gate():
 
 
 def _agreeing_seams(evidence_ref: str | None):
-    """engine 与 harness 输出完全一致（模拟「两个引擎一致」）。"""
+    """engine 与 harness 输出完全一致（模拟「两个引擎一致」；AVD 路径）。"""
     harness = FakeHarness(
         {
-            GATE_CASE: {
-                "case_id": GATE_CASE,
-                "stages": ["3500"],
-                "output": "3500",
+            B5_REQUIRED_CASE: {
+                "case_id": B5_REQUIRED_CASE,
+                "stages": [AVD_CHANGED],
+                "output": AVD_CHANGED,
                 "parameter_evidence_ref": evidence_ref,
+                **empty_b5_subcase_fields(),
             }
         }
     )
     engine = FakeEngine(
-        {GATE_CASE: {"case_id": GATE_CASE, "stages": ["3500"], "output": "3500"}}
+        {
+            B5_REQUIRED_CASE: {
+                "case_id": B5_REQUIRED_CASE,
+                "stages": [AVD_CHANGED],
+                "output": AVD_CHANGED,
+                **empty_b5_subcase_fields(),
+            }
+        }
     )
     return harness, engine
 
 
+def _gate_kwargs() -> dict:
+    """不受影响路径＋B5 case＋candidate hash/required 绑定（004/005 契约）。"""
+    from app.core.hashing import bundle_content_hash
+
+    candidate = avd_changed_bundle_content()
+    return {
+        "candidate_content": candidate,
+        "current_content": initial_content(),
+        "manifests": [AVD_MANIFEST],
+        "independent_facts": [FACT_AVD_110],
+        "required_cases": [B5_REQUIRED_CASE],
+        "candidate_hash": bundle_content_hash(candidate),
+        "changed_paths": [AVD_FULLPATH],
+        "required_case_map": {AVD_FULLPATH: B5_REQUIRED_CASE},
+    }
+
+
 def test_bad_candidate_parameters_rejected_even_if_engines_agree() -> None:
-    """C8.1：候选坏参数即使双引擎输出一致也不得发布——一致不构成证据。"""
+    """C8.1：双引擎一致不构成证据；candidate hash/profile/case 身份须绑定。"""
     run_gate = _run_gate()
 
-    # —— (A) 候选携带坏参数（cap=9999），harness 参数取自候选（输出一致），
-    #        但无任何独立参数证据 → 隔离
+    # —— (A) 候选坏参数（无独立 T1 证据），harness 参数取自候选（输出一致）
     harness_bad = FakeHarness(
         {
-            GATE_CASE: {
-                "case_id": GATE_CASE,
+            B5_REQUIRED_CASE: {
+                "case_id": B5_REQUIRED_CASE,
                 "stages": ["9999"],
                 "output": "9999",
                 "parameter_evidence_ref": None,
+                **empty_b5_subcase_fields(),
             }
         }
     )
     engine_bad = FakeEngine(
-        {GATE_CASE: {"case_id": GATE_CASE, "stages": ["9999"], "output": "9999"}}
+        {
+            B5_REQUIRED_CASE: {
+                "case_id": B5_REQUIRED_CASE,
+                "stages": ["9999"],
+                "output": "9999",
+                **empty_b5_subcase_fields(),
+            }
+        }
     )
+    bad_kwargs = _gate_kwargs()
+    bad_kwargs["independent_facts"] = []
     report = run_gate(
-        candidate_content=changed_bundle_content("9999"),
-        current_content=initial_content(),
-        manifests=[BUDGET_MANIFEST],
-        independent_facts=[],
-        required_cases=[GATE_CASE],
+        **bad_kwargs,
         harness=harness_bad,
         engine=engine_bad,
+        candidate_profile="avd_related_conveyance_v1",
     )
     assert report["decision"] == "quarantine", (
         "两个引擎一致本身不构成证据：无独立参数证据的候选必须隔离（C8.1）"
     )
     assert report["quarantine_reason"], "隔离必须携带理由"
 
-    # —— (B) 对照：同一致输出＋独立 T1 参数证据在档 → 允许发布
-    harness_ok, engine_ok = _agreeing_seams(FACT_CAP_3500["fact_id"])
+    # —— (B) 对照：独立 T1 证据齐备＋case identity/hash 绑定 → 允许发布
+    harness_ok, engine_ok = _agreeing_seams(FACT_AVD_110["fact_id"])
     control = run_gate(
-        candidate_content=changed_bundle_content("3500"),
-        current_content=initial_content(),
-        manifests=[BUDGET_MANIFEST],
-        independent_facts=[FACT_CAP_3500],
-        required_cases=[GATE_CASE],
+        **_gate_kwargs(),
         harness=harness_ok,
         engine=engine_ok,
+        candidate_profile="avd_related_conveyance_v1",
+        case_identity={B5_REQUIRED_CASE: "avd_related_fixed"},
     )
     assert control["decision"] == "publish", (
         f"独立证据齐备＋逐阶段一致应通过门禁：{control!r}"
     )
 
 
-def test_candidate_gate_isolated_from_current_store_and_network(tmp_path) -> None:
-    """C8.7：门禁＝临时 store／无网络／无 session／不写 current pointer。"""
+def test_candidate_gate_isolated_from_current_store_and_network(
+    tmp_path, approved_temp_root, safety_guard
+) -> None:
+    """C8.7：门禁＝临时 store／无网络／无 session／不写 current pointer。
+
+    W-L L4：门禁临时目录/DB 归属批准 Temp 根并登记（真实 transport guard＝会话
+    边界计数；报告 network_calls 仅为注入 seam 计数，不得替代）。
+    """
     run_gate = _run_gate()
     db_path = tmp_path / "gate.db"
     store = seed_published_store(tmp_path, "gate.db")
     before_pointer = store.current()["bundle_id"]
+    counters_before = safety_guard.counter_snapshot()
+    gate_dirs_before = set(approved_temp_root.glob("hktax-gate-*"))
 
     import sqlite3
 
@@ -155,16 +195,14 @@ def test_candidate_gate_isolated_from_current_store_and_network(tmp_path) -> Non
 
     # 严格出站假件：门禁内任何网络访问都会以 AssertionError 中断测试
     outbound = StrictOutbound()
-    harness, engine = _agreeing_seams(FACT_CAP_3500["fact_id"])
+    harness, engine = _agreeing_seams(FACT_AVD_110["fact_id"])
     report = run_gate(
-        candidate_content=changed_bundle_content("3500"),
-        current_content=initial_content(),
-        manifests=[BUDGET_MANIFEST],
-        independent_facts=[FACT_CAP_3500],
-        required_cases=[GATE_CASE],
+        **_gate_kwargs(),
         harness=harness,
         engine=engine,
         outbound=outbound,
+        current_store_db=str(db_path),
+        approved_temp_root=str(approved_temp_root),
     )
 
     assert report["decision"] == "publish"
@@ -173,9 +211,37 @@ def test_candidate_gate_isolated_from_current_store_and_network(tmp_path) -> Non
         f"门禁隔离证据须含真实临时 store 路径（C8.7）：{ge!r}"
     )
     assert ge["network_calls"] == 0, f"门禁隔离证据须含真实网络调用计数＝0（C8.7）：{ge!r}"
+    for key in (
+        "direct_http_attempts",
+        "socket_attempts",
+        "dns_attempts",
+        "session_creations",
+        "pointer_write_attempts",
+    ):
+        assert ge.get(key) == 0, f"直接观察计数 {key} 须为 0：{ge!r}"
+    assert ge.get("observers_restored") is True, (
+        f"门禁结束须复原观察器（C8.7）：{ge!r}"
+    )
     assert ge["user_session"] is False
     assert ge["current_pointer_written"] is False, (
         f"门禁隔离证据须证明未写 current pointer（C8.7）：{ge!r}"
+    )
+
+    # —— W-L L4：门禁临时目录/DB 归属批准 Temp 根，并入安全边界登记账 ——
+    gate_store_path = Path(ge["temp_store_path"]).resolve()
+    assert gate_store_path.parent.parent == approved_temp_root, (
+        f"门禁临时目录必须归属批准 Temp 根（{approved_temp_root}）：{gate_store_path}"
+    )
+    new_gate_dirs = set(approved_temp_root.glob("hktax-gate-*")) - gate_dirs_before
+    assert gate_store_path.parent in new_gate_dirs, (
+        f"门禁运行必须新建批准根内 hktax-gate-* 目录：{gate_store_path.parent}"
+    )
+    assert str(gate_store_path) in set(safety_guard.observed_store_paths()), (
+        f"门禁临时 DB 必须登记至安全边界记录：{gate_store_path}"
+    )
+    # 真实 transport guard＝会话边界计数零增量（network_calls 仅为注入 seam 计数）
+    assert safety_guard.counter_deltas(counters_before) == {}, (
+        "真实 app 边界（启动/真实 transport/模型出站）在本测试内必须零调用"
     )
 
     # —— 现行 store 完全未被触碰（发布只发生在门禁外）
@@ -187,33 +253,46 @@ def test_candidate_gate_isolated_from_current_store_and_network(tmp_path) -> Non
 
 
 def test_missing_required_case_quarantines() -> None:
-    """C8.4：必需 case 缺失/未全执行 → 隔离；空报告（零必需 case）禁止发布。"""
+    """C8.4：必需 case 缺失/未全执行 → 隔离；required 集合由服务器重算。"""
     run_gate = _run_gate()
-    missing_case = "case_salaries_cap_2026_27"
+    missing_case = "case_002_profits_threshold_boundary"
 
-    # —— (1) 绑定两个必需 case，harness 只能执行其一 → 隔离
+    # —— (1) 绑定两个必需 case（purpose/baseline/diff），只能执行其一 → 隔离
     harness = FakeHarness(
         {
-            GATE_CASE: {
-                "case_id": GATE_CASE,
-                "stages": ["3500"],
-                "output": "3500",
-                "parameter_evidence_ref": FACT_CAP_3500["fact_id"],
+            B5_REQUIRED_CASE: {
+                "case_id": B5_REQUIRED_CASE,
+                "stages": [AVD_CHANGED],
+                "output": AVD_CHANGED,
+                "parameter_evidence_ref": FACT_AVD_110["fact_id"],
+                **empty_b5_subcase_fields(),
             }
         }
     )
     engine = FakeEngine(
-        {GATE_CASE: {"case_id": GATE_CASE, "stages": ["3500"], "output": "3500"}}
+        {
+            B5_REQUIRED_CASE: {
+                "case_id": B5_REQUIRED_CASE,
+                "stages": [AVD_CHANGED],
+                "output": AVD_CHANGED,
+                **empty_b5_subcase_fields(),
+            }
+        }
     )
-    report = run_gate(
-        candidate_content=changed_bundle_content("3500"),
-        current_content=initial_content(),
-        manifests=[BUDGET_MANIFEST],
-        independent_facts=[FACT_CAP_3500],
-        required_cases=[GATE_CASE, missing_case],
-        harness=harness,
-        engine=engine,
-    )
+    kwargs = _gate_kwargs()
+    kwargs["required_cases"] = [B5_REQUIRED_CASE, missing_case]
+    kwargs["purpose"] = "update"
+    kwargs["baseline"] = {
+        "bundle_id": "b-test-baseline",
+        "bundle_hash": "sha256:" + "55" * 32,
+        "rules_schema_version": "2.0.0",
+    }
+    kwargs["changed_paths"] = [AVD_FULLPATH, "profits.two_tier_threshold"]
+    kwargs["required_case_map"] = {
+        AVD_FULLPATH: B5_REQUIRED_CASE,
+        "profits.two_tier_threshold": missing_case,
+    }
+    report = run_gate(**kwargs, harness=harness, engine=engine)
     assert report["decision"] == "quarantine", (
         "必需 case 未全部执行必须隔离（C8.4）"
     )
@@ -223,17 +302,14 @@ def test_missing_required_case_quarantines() -> None:
         f"报告须如实记录已执行 case 数：{report['cases']!r}"
     )
 
-    # —— (2) 空报告（零必需 case 绑定）→ 禁止发布
-    harness_ok, engine_ok = _agreeing_seams(FACT_CAP_3500["fact_id"])
+    # —— (2) 空 required 入参：服务器按 purpose/diff 重算，不得自减为空 ——
+    harness_ok, engine_ok = _agreeing_seams(FACT_AVD_110["fact_id"])
     empty = run_gate(
-        candidate_content=changed_bundle_content("3500"),
-        current_content=initial_content(),
-        manifests=[BUDGET_MANIFEST],
-        independent_facts=[FACT_CAP_3500],
-        required_cases=[],
+        **{**kwargs, "required_cases": [], "changed_paths": [AVD_FULLPATH],
+           "required_case_map": {AVD_FULLPATH: B5_REQUIRED_CASE}},
         harness=harness_ok,
         engine=engine_ok,
     )
     assert empty["decision"] == "quarantine", (
-        "空报告＝零通过，不得发布（C8.4）；必需 case 集合由税法事实固化，不得为空"
+        "空报告＝零通过，不得发布（C8.4）；required 集合须由服务器按 diff 重算"
     )

@@ -155,6 +155,12 @@
       main { padding: 32px 40px 64px; }
       .card { padding: 24px; }
     }
+    /* 复核 M1 修复（与 index.html 同步）：窄视口/真实 200% 缩放下 dl.facts 回退单列，
+       数值不逐字竖排；桌面双列不变 */
+    @media (max-width: 700px) {
+      dl.facts { grid-template-columns: 1fr; }
+      dl.facts dd { margin-block-end: 8px; }
+    }
   </style>
   {% block head %}{% endblock %}
 </head>

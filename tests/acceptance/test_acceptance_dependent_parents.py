@@ -57,6 +57,14 @@ _SALARIES_TARGET = _TARGETS["salaries_tax"]
 # 税额效果＝免税额×17%——按年度×档位的附表 4（T1）金额锚。
 _TOP_RATE = Decimal(17) / Decimal(100)
 
+# Approved §9.5／spec L262／006 L73：缺紧邻下一年（next）→ partial。
+# 2026_27 的紧邻下一年 2027_28 不在支持年度内 → 终止年度恒 partial；
+# 2025_26 紧邻下一年 2026_27 在支持范围内 → 可 complete。
+_EXPECTED_STATUS_BY_YEAR: dict[str, str] = {
+    "2025_26": "complete",
+    "2026_27": "partial",
+}
+
 # (年度, 出生日期, 该年度档位基础免税额)——年龄按课税年度末（3-31）判定：
 # 1950-06-01 出生 → 2026/2027-03-31 时 75/76 岁（60+ 档）；
 # 1968-06-01 出生 → 2026/2027-03-31 时 57/58 岁（55–59 档）。
@@ -82,7 +90,9 @@ def _facts(year: str, parents: list | None = None) -> dict:
 
 
 def _before_reduction(api, facts: dict, problems: list[str], label: str) -> str | None:
-    """三段驱动并返回 before_reduction（结构失败计入 problems）。"""
+    """三段驱动并返回 before_reduction（结构/状态失败计入 problems）。"""
+    year = facts["year_of_assessment"]
+    expected_status = _EXPECTED_STATUS_BY_YEAR[year]
     r_prepare = prepare(api, "salaries_tax", facts)
     if r_prepare.status_code != 201:
         problems.append(
@@ -96,13 +106,40 @@ def _before_reduction(api, facts: dict, problems: list[str], label: str) -> str 
     r_execute = execute(api, r_confirm.json()["confirmation_id"], _SALARIES_TARGET)
     assert r_execute.status_code == 200, r_execute.text[:200]
     payload = r_execute.json()
-    if payload.get("status") != "complete":
+    amounts = payload.get("amounts") or {}
+    if payload.get("status") != expected_status:
         problems.append(
-            f"{label}: 事实齐全的受养父母申索须 complete，实际 "
+            f"{label}: {year} 状态须 {expected_status}（Approved §9.5：缺 next → "
+            f"partial；2026_27 的紧邻下一年 2027_28 不在支持范围），实际 "
             f"{payload.get('status')!r} questions={payload.get('questions')!r}"
         )
         return None
-    value = (payload.get("amounts") or {}).get("before_reduction")
+    if expected_status == "partial":
+        missing = [str(item) for item in (payload.get("missing_components") or [])]
+        if not any("next_provisional" in item for item in missing):
+            problems.append(
+                f"{label}: 缺 next 的 partial 须说明缺失组件（next_provisional），"
+                f"实际 missing_components={payload.get('missing_components')!r}"
+            )
+        if amounts.get("next_provisional") is not None:
+            problems.append(
+                f"{label}: 缺 next 时 next_provisional 须为 null，实际 "
+                f"{amounts.get('next_provisional')!r}"
+            )
+        if amounts.get("balance") is not None:
+            problems.append(
+                f"{label}: salary partial 时 balance 须为 null（ADR-10），实际 "
+                f"{amounts.get('balance')!r}"
+            )
+        if (
+            amounts.get("before_reduction") is None
+            or amounts.get("final_after_reduction") is None
+        ):
+            problems.append(
+                f"{label}: 本年已确定金额须保留（before_reduction／"
+                f"final_after_reduction 非 null），实际 {amounts!r}"
+            )
+    value = amounts.get("before_reduction")
     if value is None:
         problems.append(f"{label}: before_reduction 不得为 null")
     return value

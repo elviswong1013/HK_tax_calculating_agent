@@ -15,6 +15,9 @@
 
 from __future__ import annotations
 
+import copy
+
+from app.rules.bundles import allowances as _allowances
 from app.rules.bundles import personal_assessment as _pa
 from app.rules.bundles import profits as _profits
 from app.rules.bundles import property_ as _property
@@ -299,14 +302,25 @@ _EVIDENCE_DIGESTS: list[dict] = [
 ]
 
 INITIAL_BUNDLE_CONTENT: dict = {
-    "rules_schema_version": "1.0.0",
+    "rules_schema_version": "2.0.0",
     "effective": _EFFECTIVE,
     "applicability": {
         "years": ["2024_25", "2025_26", "2026_27"],
         "stamp_duty_instrument_window": {"from": "2024-04-01", "to": "2026-10-07"},
     },
-    "frozen_semantics": {"profiles": _FROZEN_PROFILES},
+    # 固定语义 profile：既有五税 profile 原样保留；薪俸/PA v2 增
+    # part5_shared_v2（Annex 005 §15.1 固定 P＋semantic_digest）。每束独立
+    # 深副本：发行束公开对象不得与模块级 P/其他调用者共享嵌套叶（E1/A5）。
+    "frozen_semantics": {
+        "profiles": [
+            *[copy.deepcopy(profile) for profile in _FROZEN_PROFILES],
+            _allowances.profile_entry(),
+        ]
+    },
     "data": {
+        # 共享 Part 5 年度矩阵与唯一宽减表（Annex 005 §15.2；两税引擎唯一读取源）
+        "allowances": _allowances.DATA,
+        "reductions": _allowances.REDUCTIONS,
         "salaries": _salaries.DATA,
         "profits": _profits.DATA,
         "property": _property.DATA,

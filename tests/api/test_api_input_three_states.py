@@ -47,8 +47,83 @@ def _salaries_input(**overrides) -> dict:
     return inp
 
 
+def _v2_from_v1(inp: dict) -> dict:
+    """v1 事实模型（本文件三态用例）→ Annex 005 v2 最小 Year 容器。"""
+    year = inp["year_of_assessment"]
+    start = int(year[:4])
+    finance = {
+        "has_assessable_salary_income": True,
+        "source_classification": {"salary": "confirmed_in_scope"},
+        "properties": [],
+        "businesses": [],
+        "deduction_items": [],
+    }
+    for key in ("employment_income", "mpf_mandatory_contributions"):
+        if key in inp:
+            target = "employment_income_nai" if key == "employment_income" else key
+            finance[target] = inp[key]
+    if "deduction_items" in inp:
+        finance["deduction_items"] = inp["deduction_items"]
+    status = inp["married_status"]["value"]
+    marriage_value = "unmarried" if status == "single" else status
+    year_block = {
+        "participants": [{"person_id": "p1", "role": "self"}],
+        "subject_facts": {},
+        "household": {
+            "marriage": [
+                {
+                    "from": f"{start}-04-01",
+                    "to": f"{start + 1}-04-01",
+                    "value": marriage_value,
+                }
+            ],
+            "living_apart": [],
+            "child_nomination": {"person_id": None, "status": "none"},
+        },
+        "relations": [],
+        "care_payments": [],
+        "claims": [],
+        "financials": {"p1": finance},
+        "assessment": {
+            "basis": "actual",
+            "candidates": ["salary_separate"],
+            "selection": "salary_separate",
+        },
+        "manual_issues": [],
+    }
+    if "provisional_paid" in inp:
+        year_block["provisional_paid"] = inp["provisional_paid"]
+    return {
+        "year_of_assessment": year,
+        "subjects": [{"subject_id": "p1", "birth_date": "1990-01-01"}],
+        "years": {year: year_block},
+        "hk_presence_days": [],
+        "assumptions": [],
+    }
+
+
 def _prepare_body(inp: dict) -> dict:
-    return {"tax_type": "salaries_tax", "schema_version": "1.0.0", "input": inp}
+    return {
+        "tax_type": "salaries_tax",
+        "schema_version": "2.0.0",
+        "input": _v2_from_v1(inp),
+    }
+
+
+def _fresh_if_match(api) -> dict[str, str]:
+    """S002 §4.1：每次 prepare 前重取 ``"edit-<epoch>-<revision>"``。"""
+    r = api.get("/api/v1/meta/version")
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    assert "session_epoch" in payload and "input_revision" in payload, (
+        "S002 §4.1：meta/version 须附运行时 session_epoch/input_revision，"
+        f"实际：{payload!r}"
+    )
+    return {
+        "If-Match": (
+            f'"edit-{int(payload["session_epoch"])}-{int(payload["input_revision"])}"'
+        )
+    }
 
 
 def _error_of(payload: dict) -> dict:
@@ -58,26 +133,40 @@ def _error_of(payload: dict) -> dict:
 
 
 def test_missing_not_zero(api) -> None:
-    """键缺失（≠显式零）→ 422 E_INPUT_MISSING 字段级拒算；不得静默按 0 计算。"""
-    r = api.post("/api/v1/calc/prepare", json=_prepare_body(
-        _salaries_input(mpf_mandatory_contributions=...)
-    ))
+    """键缺失（≠显式零）→ 422 E_ELIGIBILITY_UNKNOWN＋完整路径 questions；
+    不得静默按 0 计算（A1 裁定 (i)；缺失 MPF 属活动事实未提供）。"""
+    r = api.post(
+        "/api/v1/calc/prepare",
+        json=_prepare_body(_salaries_input(mpf_mandatory_contributions=...)),
+        headers=_fresh_if_match(api),
+    )
     assert r.status_code == 422, r.text
-    err = _error_of(r.json())
-    assert err["code"] == "E_INPUT_MISSING"
-    assert err["field"] == "mpf_mandatory_contributions"  # §4 字段级错误
-    assert isinstance(err.get("message_zh"), str) and err["message_zh"].strip()
-    # 拒算路径不得产生任何可执行 id 或绑定（C3.2.1）
     payload = r.json()
+    err = _error_of(payload)
+    assert err["code"] == "E_ELIGIBILITY_UNKNOWN"
+    assert isinstance(err.get("message_zh"), str) and err["message_zh"].strip()
+    # 完整内容根路径定位（005 §13）：缺失 MPF 不得按零处理
+    questions = list(_find_questions(payload))
+    assert questions, f"响应须含非空 questions[]，实际：{r.text!r}"
+    assert any(
+        q.get("field")
+        == "years.2025_26.financials.p1.mpf_mandatory_contributions"
+        for q in questions
+        if isinstance(q, dict)
+    ), f"questions 须以完整路径定位缺失 MPF，实际：{questions!r}"
+    # 拒算路径不得产生任何可执行 id、绑定或零算结果（C3.2.1）
     assert "prepared_id" not in payload
     assert "expected_binding" not in payload
+    assert "amounts" not in payload
 
 
 def test_explicit_zero_accepted(api) -> None:
     """显式 "0" 是合法事实 → 201 prepared＋完整四元组 binding＋TTL 300。"""
-    r = api.post("/api/v1/calc/prepare", json=_prepare_body(
-        _salaries_input(mpf_mandatory_contributions="0")
-    ))
+    r = api.post(
+        "/api/v1/calc/prepare",
+        json=_prepare_body(_salaries_input(mpf_mandatory_contributions="0")),
+        headers=_fresh_if_match(api),
+    )
     assert r.status_code == 201, r.text
     payload = r.json()
     assert payload["status"] == "prepared"
@@ -95,9 +184,11 @@ def test_explicit_zero_accepted(api) -> None:
 
 def test_unknown_triggers_question_list(api) -> None:
     """资格类字段 value="unknown" → 422 E_ELIGIBILITY_UNKNOWN＋结构化中文问题清单。"""
-    r = api.post("/api/v1/calc/prepare", json=_prepare_body(
-        _salaries_input(married_status={"value": "unknown"})
-    ))
+    r = api.post(
+        "/api/v1/calc/prepare",
+        json=_prepare_body(_salaries_input(married_status={"value": "unknown"})),
+        headers=_fresh_if_match(api),
+    )
     assert r.status_code == 422, r.text
     err = _error_of(r.json())
     assert err["code"] == "E_ELIGIBILITY_UNKNOWN"
@@ -115,29 +206,41 @@ def test_unknown_triggers_question_list(api) -> None:
 
 def test_extra_oversize_rejected(api) -> None:
     """额外字段（含 rank）→ 422 E_INPUT_EXTRA；载荷 >1MB → 413 E_INPUT_OVERSIZE。"""
-    # —— 子女条目提交 rank：服务器派生字段，按 E_INPUT_EXTRA 拒绝（C2.9）——
-    inp = _salaries_input()
-    inp["dependent_children"] = [
-        {"birth_date": "2024-05-01", "residence": {"value": True}, "rank": 1}
-    ]
-    r = api.post("/api/v1/calc/prepare", json=_prepare_body(inp))
+    # —— v2 子对象提交 rank：服务器派生字段，按 E_INPUT_EXTRA 拒绝（C2.9）——
+    v2_input = _v2_from_v1(_salaries_input())
+    v2_input["years"]["2025_26"]["financials"]["p1"]["rank"] = 1
+    r = api.post(
+        "/api/v1/calc/prepare",
+        json={"tax_type": "salaries_tax", "schema_version": "2.0.0", "input": v2_input},
+        headers=_fresh_if_match(api),
+    )
     assert r.status_code == 422, r.text
     err = _error_of(r.json())
     assert err["code"] == "E_INPUT_EXTRA"
-    assert err["field"] == "rank"
+    # 已批准路径增量（006:252）：完整内容根路径（含 rank），非裸字段名
+    assert err["field"] == "years.2025_26.financials.p1.rank"
 
     # —— 顶层未知额外字段（extra="forbid"，C3.5）——
-    r2 = api.post("/api/v1/calc/prepare", json=_prepare_body(
-        _salaries_input(unexpected_field="x")
-    ))
+    v2_extra = _v2_from_v1(_salaries_input())
+    v2_extra["unexpected_field"] = "x"
+    r2 = api.post(
+        "/api/v1/calc/prepare",
+        json={"tax_type": "salaries_tax", "schema_version": "2.0.0", "input": v2_extra},
+        headers=_fresh_if_match(api),
+    )
     assert r2.status_code == 422, r2.text
     err2 = _error_of(r2.json())
     assert err2["code"] == "E_INPUT_EXTRA"
     assert err2["field"] == "unexpected_field"
 
     # —— 载荷 >1MB → 413（C2.9；须在字段解析前判定，不得落为 422）——
-    big = _salaries_input(pad="x" * (1024 * 1024))
-    r3 = api.post("/api/v1/calc/prepare", json=_prepare_body(big))
+    big = _v2_from_v1(_salaries_input())
+    big["pad"] = "x" * (1024 * 1024)
+    r3 = api.post(
+        "/api/v1/calc/prepare",
+        json={"tax_type": "salaries_tax", "schema_version": "2.0.0", "input": big},
+        headers=_fresh_if_match(api),
+    )
     assert r3.status_code == 413, (
         f">1MB 载荷须 413 E_INPUT_OVERSIZE（C2.9），实际 {r3.status_code}：{r3.text[:200]!r}"
     )

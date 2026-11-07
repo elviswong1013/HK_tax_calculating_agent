@@ -41,6 +41,7 @@
     }
     h1 { font-size: 28px; line-height: 1.3; margin: 0 0 8px; }
     h2 { font-size: 19px; line-height: 1.4; margin: 0 0 12px; }
+    h3 { font-size: 16px; line-height: 1.4; margin: 16px 0 8px; }
     .visually-hidden {
       position: absolute;
       inline-size: 1px;
@@ -132,10 +133,23 @@
       background: var(--surface);
       color: var(--ink);
     }
+    /* 复核 A 修复：checkbox/radio 保持原生尺寸，不拉成整宽；包装 label 内联对齐，
+       整行 label 仍为可点区域（选中逻辑与可访问名称不变） */
+    .field input[type="checkbox"], .field input[type="radio"] {
+      width: auto;
+      padding: 0;
+      flex: 0 0 auto;
+    }
+    .field label:has(> input[type="checkbox"]), .field label:has(> input[type="radio"]) {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
     .money-row { display: flex; align-items: center; gap: 8px; }
     .money-row input { flex: 1 1 auto; }
     .money-row .unit { color: var(--muted); font-size: 14px; white-space: nowrap; }
 
+    /* 复核 E 修复：text-decoration:none 使 <a class="btn">（记录「下载」）与相邻按钮一致 */
     .btn {
       font: inherit;
       min-height: 44px;
@@ -143,7 +157,9 @@
       border-radius: 6px;
       cursor: pointer;
       border: 1px solid transparent;
+      text-decoration: none;
     }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
     .btn-primary {
       background: var(--accent);
       color: #FFFFFF;
@@ -181,6 +197,8 @@
     .badge-needs-input::before { content: "▲"; }
     .badge-blocked { border-color: var(--danger); color: var(--danger); }
     .badge-blocked::before { content: "■"; }
+    .badge-historical { border-color: var(--muted); color: var(--muted); }
+    .badge-historical::before { content: "○"; }
     .badge-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 8px 0 0; }
 
     .error-summary {
@@ -281,6 +299,87 @@
       overflow-wrap: anywhere;
     }
 
+    /* 004 §3.9：聊天卡标题行内紧凑次要按钮＋同卡片本地区块 */
+    .chat-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .chat-head h2 { margin: 0; }
+    .chat-local-coverage {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-block-start: 12px;
+      background: var(--canvas);
+    }
+    .chat-local-coverage h3 { margin: 0 0 8px; }
+    .chat-local-coverage ul { margin: 8px 0 0; padding-inline-start: 20px; }
+    .chat-local-coverage li { margin-block-end: 8px; }
+
+    /* 004 §2/§3：家庭及资格分组（渐进披露；全流式，无横向滚动） */
+    details.claim-group {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-block-end: 12px;
+    }
+    details.claim-group > summary {
+      cursor: pointer;
+      font-weight: 600;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px 8px;
+    }
+    details.claim-group > summary .group-state { color: var(--muted); font-weight: 400; font-size: 14px; }
+    .dep-entry {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      margin-block-end: 12px;
+    }
+    .dep-entry legend { font-size: 16px; }
+    .tf-rows { margin-block-start: 4px; }
+    .tf-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: flex-end;
+      margin-block-end: 8px;
+    }
+    .tf-row .field { margin-block-end: 0; flex: 1 1 140px; }
+    .tf-row .btn { min-height: 44px; }
+    .nom-group {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-block-end: 12px;
+    }
+    .nom-group h3 { margin: 0 0 8px; }
+    dl.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; }
+    dl.facts dt { font-weight: 600; }
+    dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+
+    /* 结果区／记录区（§5/§12.6） */
+    #result-section dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; }
+    #result-section dt { font-weight: 600; }
+    #result-section dd { margin: 0; overflow-wrap: anywhere; }
+    .result-stale-note { color: var(--notice); }
+    .record-card {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      margin-block-end: 12px;
+    }
+    .record-card .record-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block-start: 8px; }
+    .record-detail { margin-block-start: 8px; }
+    .proposal-diff { margin: 6px 0 0; padding-inline-start: 20px; }
+    .proposal-diff li { margin-block-end: 4px; overflow-wrap: anywhere; }
+
     footer {
       border-block-start: 1px solid var(--line);
       color: var(--muted);
@@ -302,6 +401,13 @@
       }
       .col-side { position: sticky; inset-block-start: 24px; }
     }
+
+    /* 复核 M1 修复：窄视口（含真实 200% 缩放约 640px 有效视口）下结果/弹窗/facts
+       定义表回退单列，标签在上数值在下，金额整体可读、不逐字竖排；桌面双列不变 */
+    @media (max-width: 700px) {
+      #result-section dl, .dialog-panel dl, dl.facts { grid-template-columns: 1fr; }
+      #result-section dd, .dialog-panel dd, dl.facts dd { margin-block-end: 8px; }
+    }
   </style>
 </head>
 <body>
@@ -314,8 +420,10 @@
         <ul>
           <li><a href="/" aria-current="page">计算工作台</a></li>
           <li><a href="/coverage">税项覆盖</a></li>
-          <li><a href="#rules-status">规则更新</a></li>
-          <li><a href="#records-section">计算记录</a></li>
+          <li><a href="/rules">规则</a></li>
+          <li><a href="/updates">更新</a></li>
+          <li><a href="/settings">设置</a></li>
+          <li><a href="/about">关于</a></li>
         </ul>
       </nav>
       <button type="button" id="clear-session" class="btn btn-clear">清空本次资料</button>
@@ -327,6 +435,8 @@
       <h1>薪俸税估算</h1>
       <span class="badge badge-rules" id="rules-status">规则快照：当前已发布版本</span>
       <p class="lede">估算仅依据你确认的资料和所示规则版本；结果仅为估算，不是税务局评税或专业意见。</p>
+      <!-- 复核 G 修复：主导航统一为全站路由后，保留本页「规则状态／计算记录」页内入口 -->
+      <p class="privacy-note">本页入口：<a href="#rules-status">规则状态</a> · <a href="#records-section">计算记录</a></p>
     </div>
 
     <!-- §6/§9：错误摘要可聚焦，链接到首个问题字段 -->
@@ -366,30 +476,61 @@
           </fieldset>
 
           <fieldset class="card">
-            <legend><span class="step">02</span> 收入</legend>
+            <legend><span class="step">02</span> 收入（你）</legend>
             <div class="field">
               <label for="employment-income">应课税收入（必填）</label>
               <div class="money-row">
                 <input id="employment-income" name="employment_income" type="text"
                        inputmode="decimal" autocomplete="off" required
+                       data-locator-template="y-{YA}-person-p1-nai" data-locator="y-2025_26-person-p1-nai"
                        aria-describedby="employment-income-hint">
                 <span class="unit">港元</span>
               </div>
-              <p class="hint" id="employment-income-hint">请输入数字，可含小数；无需千位逗号；不要留空。</p>
+              <p class="hint" id="employment-income-hint">薪俸净入息（按 s.12 调整后、Part 4A 前）；请输入数字，可含小数；无需千位逗号；不要留空。NAI 不是毛工资，也不是简单「扣除 MPF 后」的工资。</p>
             </div>
             <div class="field">
               <label for="mpf-contributions">强积金（MPF）强制性供款</label>
               <div class="money-row">
                 <input id="mpf-contributions" name="mpf_mandatory_contributions" type="text"
-                       inputmode="decimal" autocomplete="off">
+                       inputmode="decimal" autocomplete="off"
+                       data-locator-template="y-{YA}-person-p1-mpf" data-locator="y-2025_26-person-p1-mpf">
                 <span class="unit">港元</span>
               </div>
               <p class="hint">只计强制性供款部分；自愿性供款不属于此扣除。</p>
             </div>
+            <div class="field">
+              <label for="self-salary-ai">你本年度是否有应课税薪俸收入</label>
+              <select id="self-salary-ai"
+                      data-locator-template="y-{YA}-person-p1-salary-ai" data-locator="y-2025_26-person-p1-salary-ai">
+                <option value="true" selected>有</option>
+                <option value="false">没有</option>
+                <option value="unknown">不确定（需要补充资料）</option>
+              </select>
+              <p class="hint">NAI 为 0 不表示没有应课税收入；两者请分别如实选择。</p>
+            </div>
+            <div class="field">
+              <label for="self-salary-source">薪俸来源范围（你）</label>
+              <select id="self-salary-source"
+                      data-locator-template="y-{YA}-person-p1-salary-source" data-locator="y-2025_26-person-p1-salary-source">
+                <option value="confirmed_in_scope" selected>已确认属于本工具计算范围</option>
+                <option value="unknown">不确定</option>
+                <option value="manual">需人工核实（来源边界）</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="provisional-paid">本年度已缴暂缴税（如适用）</label>
+              <div class="money-row">
+                <input id="provisional-paid" type="text" inputmode="decimal" autocomplete="off"
+                       data-locator-template="y-{YA}-provisional-paid" data-locator="y-2025_26-provisional-paid">
+                <span class="unit">港元</span>
+              </div>
+              <p class="hint">留空表示未提供（缺失不等于零）；无已缴暂缴税请显式填 0。</p>
+            </div>
           </fieldset>
 
-          <fieldset class="card">
+          <fieldset class="card" id="household-card">
             <legend><span class="step">03</span> 家庭及资格</legend>
+            <p class="hint">只填写你希望申索或需要说明的项目。不确定可以保留为不确定；系统不会当作符合或不符合。</p>
             <div class="field">
               <label for="married-status">婚姻状况</label>
               <select id="married-status" name="married_status">
@@ -399,6 +540,355 @@
               </select>
               <p class="hint">不确定时请选择「不确定」；系统不会把未知默认为符合。</p>
             </div>
+
+            <!-- 004 §3.1：配偶及评税资料（已婚后展开；你／配偶金额各自独立） -->
+            <details class="claim-group" id="spouse-details" hidden>
+              <summary>配偶及评税资料 <span class="group-state" id="spouse-state"></span></summary>
+              <p class="hint">请分别填写你和配偶的收入资料。系统会检查可用的评税方式，不会仅凭已婚状态自动判断，也不会把联合评税说成一定较省税。</p>
+              <div class="field">
+                <label for="spouse-alias">配偶会话别名（仅本次会话识别用）</label>
+                <input id="spouse-alias" type="text" autocomplete="off" value="配偶"
+                       data-locator-template="request-subject-p2-alias" data-locator="request-subject-p2-alias">
+                <p class="hint">不要求姓名、HKID 或地址；别名只用于本会话界面。</p>
+              </div>
+              <div class="field">
+                <label for="spouse-salary-ai">配偶本年度是否有薪俸收入</label>
+                <select id="spouse-salary-ai"
+                        data-locator-template="y-{YA}-person-p2-salary-ai" data-locator="y-2025_26-person-p2-salary-ai">
+                  <option value="" selected>请选择</option>
+                  <option value="true">有</option>
+                  <option value="false">没有</option>
+                  <option value="unknown">不确定（需要补充资料）</option>
+                </select>
+              </div>
+              <div id="spouse-income-block" hidden>
+                <div class="field">
+                  <label for="spouse-nai">配偶薪俸净入息（NAI）</label>
+                  <div class="money-row">
+                    <input id="spouse-nai" type="text" inputmode="decimal" autocomplete="off"
+                           data-locator-template="y-{YA}-person-p2-nai" data-locator="y-2025_26-person-p2-nai">
+                    <span class="unit">港元</span>
+                  </div>
+                  <p class="hint">即使配偶没有薪俸收入，也须显式填 0（缺失≠零；系统不会自动补 0）。</p>
+                </div>
+                <div class="field">
+                  <label for="spouse-mpf">配偶 MPF 强制性供款</label>
+                  <div class="money-row">
+                    <input id="spouse-mpf" type="text" inputmode="decimal" autocomplete="off"
+                           data-locator-template="y-{YA}-person-p2-mpf" data-locator="y-2025_26-person-p2-mpf">
+                    <span class="unit">港元</span>
+                  </div>
+                </div>
+                <div class="field" id="spouse-source-field">
+                  <label for="spouse-salary-source">薪俸来源范围（配偶）</label>
+                  <select id="spouse-salary-source"
+                          data-locator-template="y-{YA}-person-p2-salary-source" data-locator="y-2025_26-person-p2-salary-source">
+                    <option value="confirmed_in_scope" selected>已确认属于本工具计算范围</option>
+                    <option value="unknown">不确定</option>
+                    <option value="manual">需人工核实（来源边界）</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- 004 §3.8：婚姻期间编辑器（顺序配偶变化→窄人工核实路径） -->
+              <div class="field">
+                <span id="marriage-editor-label" class="field-label"><strong>婚姻期间</strong>（本课税年度）</span>
+                <div id="marriage-periods" role="group" aria-labelledby="marriage-editor-label"
+                     data-locator-template="y-{YA}-marriage" data-locator="y-2025_26-marriage"></div>
+                <div class="actions">
+                  <button type="button" id="add-marriage-period" class="btn btn-secondary">＋ 添加婚姻期间</button>
+                  <button type="button" id="add-historical-subject" class="btn btn-secondary">＋ 添加历史关系对象</button>
+                </div>
+                <p class="hint">同一课税年度记录了配偶身份变化时，联合评税等路径需要人工核实；系统不会把未参与本年度的人当作零收入，也不会自动加入本年度评税人。</p>
+                <div id="historical-subjects"></div>
+              </div>
+
+              <!-- 004 §3.6：分居期间（living_apart TF；缺失≠否） -->
+              <div class="field">
+                <span id="living-apart-label" class="field-label"><strong>分居期间</strong>（如有）</span>
+                <div id="living-apart-periods" role="group" aria-labelledby="living-apart-label"
+                     data-locator-template="y-{YA}-living-apart" data-locator="y-2025_26-living-apart"></div>
+                <div class="actions">
+                  <button type="button" id="add-living-apart-period" class="btn btn-secondary">＋ 添加分居期间说明</button>
+                </div>
+              </div>
+
+              <!-- 004 §3.7：实际评税事实按活动消费者显示（联合候选活动时出现） -->
+              <div id="assessment-extras" hidden>
+                <div class="field">
+                  <label for="actual-joint-elected">本年度是否已实际选择合并评税（salary joint election）</label>
+                  <select id="actual-joint-elected"
+                          data-locator-template="y-{YA}-assessment-actual-salary-joint-elected" data-locator="y-2025_26-assessment-actual-salary-joint-elected">
+                    <option value="" selected>不提交（无实际选择记录）</option>
+                    <option value="true">是——已选择合并评税</option>
+                    <option value="false">否——未选择</option>
+                    <option value="unknown">不确定（需要补充资料）</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="actual-joint-assessed">本年度是否已实际被合并评税（joint assessed）</label>
+                  <select id="actual-joint-assessed"
+                          data-locator-template="y-{YA}-assessment-actual-salary-joint-assessed" data-locator="y-2025_26-assessment-actual-salary-joint-assessed">
+                    <option value="" selected>不提交</option>
+                    <option value="true">是</option>
+                    <option value="false">否</option>
+                    <option value="unknown">不确定（需要补充资料）</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="actual-history">实际选择记录状态</label>
+                  <select id="actual-history"
+                          data-locator-template="y-{YA}-assessment-actual-history" data-locator="y-2025_26-assessment-actual-history">
+                    <option value="" selected>不提交</option>
+                    <option value="ordinary">一般</option>
+                    <option value="withdrawn">曾撤回</option>
+                    <option value="disputed">有争议</option>
+                    <option value="unknown">不确定</option>
+                  </select>
+                  <p class="hint">仅在相关评税路径确实依赖选择历史时填写；缺失或不确定不会被视为「一般」。</p>
+                </div>
+                <!-- s.29 分支 A 消费者：无薪俸收入一方的实际 PA 评税选择 -->
+                <div id="pa-mode-block" hidden>
+                  <div class="field" id="self-pa-mode-field" hidden>
+                    <label for="self-pa-mode">你的实际个人入息课税（PA）评税选择</label>
+                    <select id="self-pa-mode"
+                            data-locator-template="y-{YA}-assessment-actual-pa-p1-mode" data-locator="y-2025_26-assessment-actual-pa-p1-mode">
+                      <option value="" selected>不提交</option>
+                      <option value="none">无——未选择个人入息课税</option>
+                      <option value="individual">个别（individual）PA</option>
+                      <option value="joint">合并（joint）PA</option>
+                      <option value="unknown">不确定</option>
+                    </select>
+                  </div>
+                  <div class="field" id="self-pa-date-field" hidden>
+                    <label for="self-pa-date">你的实际 PA 选择日期（YYYY-MM-DD，如有明确记录）</label>
+                    <input id="self-pa-date" type="text" inputmode="numeric" autocomplete="off"
+                           placeholder="YYYY-MM-DD"
+                           data-locator-template="y-{YA}-assessment-actual-pa-p1-date" data-locator="y-2025_26-assessment-actual-pa-p1-date">
+                  </div>
+                  <div class="field" id="spouse-pa-mode-field" hidden>
+                    <label for="spouse-pa-mode">配偶的实际个人入息课税（PA）评税选择</label>
+                    <select id="spouse-pa-mode"
+                            data-locator-template="y-{YA}-assessment-actual-pa-p2-mode" data-locator="y-2025_26-assessment-actual-pa-p2-mode">
+                      <option value="" selected>不提交</option>
+                      <option value="none">无——未选择个人入息课税</option>
+                      <option value="individual">个别（individual）PA</option>
+                      <option value="joint">合并（joint）PA</option>
+                      <option value="unknown">不确定</option>
+                    </select>
+                    <p class="hint">个人入息课税是评税选择；本阶段仅有 API，网页不提供计算工作台。配偶无薪俸收入且未单独选择个人入息课税只是其中一条路径（s.29 分支 A）；其余联合评税路径按各自合法条件判断。</p>
+                  </div>
+                  <div class="field" id="spouse-pa-date-field" hidden>
+                    <label for="spouse-pa-date">配偶的实际 PA 选择日期（YYYY-MM-DD，如有明确记录）</label>
+                    <input id="spouse-pa-date" type="text" inputmode="numeric" autocomplete="off"
+                           placeholder="YYYY-MM-DD"
+                           data-locator-template="y-{YA}-assessment-actual-pa-p2-date" data-locator="y-2025_26-assessment-actual-pa-p2-date">
+                  </div>
+                </div>
+                <!-- 004 §3.6：actual/hypothetical 两个独立的联合薪俸责任人提名 -->
+                <div class="nom-group" id="nom-actual-group" hidden>
+                  <h3>实际联合薪俸责任人提名（s.10(b)）</h3>
+                  <p class="hint">s.10(a) 责任人由规则按事实派生，无需提名；s.10(b) 须明确提名，不默认本人或收入较高者。实际与假设提名是两个独立事实，互不复製。</p>
+                  <div class="field">
+                    <label for="nom-actual-status">实际提名状态</label>
+                    <select id="nom-actual-status"
+                            data-locator-template="y-{YA}-assessment-actual-salary-joint-nomination-status" data-locator="y-2025_26-assessment-actual-salary-joint-nomination-status">
+                      <option value="none" selected>未指定</option>
+                      <option value="named">已指定</option>
+                      <option value="unknown">不确定</option>
+                      <option value="disputed">有争议</option>
+                    </select>
+                  </div>
+                  <div class="field" id="nom-actual-person-field" hidden>
+                    <label for="nom-actual-person">实际被提名人</label>
+                    <select id="nom-actual-person"
+                            data-locator-template="y-{YA}-assessment-actual-salary-joint-nomination-person" data-locator="y-2025_26-assessment-actual-salary-joint-nomination-person">
+                      <option value="" selected>请选择</option>
+                      <option value="p1">你</option>
+                      <option value="p2">配偶</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="nom-group" id="nom-hypo-group" hidden>
+                  <h3>假设联合薪俸责任人提名（s.10(b)）</h3>
+                  <p class="hint">假设比较使用的提名与实际提名互不影响，也不带入其他年度。</p>
+                  <div class="field">
+                    <label for="nom-hypo-status">假设提名状态</label>
+                    <select id="nom-hypo-status"
+                            data-locator-template="y-{YA}-assessment-hypothetical-salary-joint-nomination-status" data-locator="y-2025_26-assessment-hypothetical-salary-joint-nomination-status">
+                      <option value="none" selected>未指定</option>
+                      <option value="named">已指定</option>
+                      <option value="unknown">不确定</option>
+                      <option value="disputed">有争议</option>
+                    </select>
+                  </div>
+                  <div class="field" id="nom-hypo-person-field" hidden>
+                    <label for="nom-hypo-person">假设被提名人</label>
+                    <select id="nom-hypo-person"
+                            data-locator-template="y-{YA}-assessment-hypothetical-salary-joint-nomination-person" data-locator="y-2025_26-assessment-hypothetical-salary-joint-nomination-person">
+                      <option value="" selected>请选择</option>
+                      <option value="p1">你</option>
+                      <option value="p2">配偶</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 配偶伤残受养人路径（spouse DDA；与子女整组提名无关） -->
+              <details class="claim-group" id="spouse-dda-details">
+                <summary>配偶伤残受养人资格 <span class="group-state" id="spouse-dda-state">未申索</span></summary>
+                <div class="field">
+                  <label for="spouse-daa">配偶是否符合相关政府伤残津贴资格</label>
+                  <select id="spouse-daa"
+                          data-locator-template="y-{YA}-subject-p2-daa" data-locator="y-2025_26-subject-p2-daa">
+                    <option value="" selected>未提供</option>
+                    <option value="true">是——符合资格（全年）</option>
+                    <option value="false">否（全年）</option>
+                    <option value="unknown">不确定（需要补充资料）</option>
+                  </select>
+                  <p class="hint">请确认是否符合相关政府伤残津贴资格；这不等同于已经领取津贴。</p>
+                </div>
+                <div class="field">
+                  <label for="spouse-dda-claim">
+                    <input type="checkbox" id="spouse-dda-claim" aria-label="申索伤残受养人免税额（配偶）"
+                           data-locator-template="y-{YA}-claim-spouse-dda" data-locator="y-2025_26-claim-spouse-dda">
+                    申索伤残受养人免税额（配偶）
+                  </label>
+                  <p class="hint">伤残受养人资格独立于基本申索；涉及院舍扣除路径时会另行说明选择／互斥。</p>
+                </div>
+              </details>
+            </details>
+
+            <!-- 004 §3.1：评税方式选择（请求级必选；默认值不暗示最佳） -->
+            <div class="nom-group" id="assessment-choice">
+              <h3>评税方式选择</h3>
+              <p class="hint">系统会按你提供的资料检查哪些方式可用；不会只因已婚就自动给已婚免税额，也不会把联合评税说成一定较省税。</p>
+              <div class="field">
+                <label for="assessment-basis">计算基准</label>
+                <select id="assessment-basis"
+                        data-locator-template="y-{YA}-assessment-basis" data-locator="y-2025_26-assessment-basis">
+                  <option value="actual" selected>按实际评税资料</option>
+                  <option value="hypothetical">按假设比较</option>
+                </select>
+              </div>
+              <div class="field" id="salary-candidates" role="group" aria-labelledby="salary-candidates-label"
+                   data-locator-template="y-{YA}-salary-candidates" data-locator="y-2025_26-salary-candidates">
+                <span id="salary-candidates-label"><strong>参与比较的薪俸候选</strong></span>
+                <label for="candidate-separate">
+                  <input type="checkbox" id="candidate-separate" aria-label="分别评税（你／配偶各自单位）" checked> 分别评税（你／配偶各自单位）
+                </label>
+                <label for="candidate-joint">
+                  <input type="checkbox" id="candidate-joint" aria-label="联合评税（两人共同单位；已婚适用）" disabled> 联合评税（两人共同单位；已婚适用）
+                </label>
+              </div>
+              <div class="field">
+                <label for="salary-selection">采用方式</label>
+                <select id="salary-selection"
+                        data-locator-template="y-{YA}-salary-selection" data-locator="y-2025_26-salary-selection">
+                  <option value="best" selected>由系统比较所列候选（不暗示最佳）</option>
+                  <option value="salary_separate">仅分别评税</option>
+                  <option value="salary_joint" disabled>仅联合评税（已婚适用）</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 004 §3.3：子女整组提名（仅已婚且有子女相关申索时显示） -->
+            <div class="nom-group" id="child-nomination-group" hidden>
+              <h3>子女申索整组安排</h3>
+              <p class="hint">夫妻双方的子女申索需要按整组安排；同一子女不能重复计入。若双方安排有争议或需要税务局分配，请先核实，不要在这里自行拆分。</p>
+              <div class="field">
+                <label for="child-nomination-status">子女整组提名状态</label>
+                <select id="child-nomination-status"
+                        data-locator-template="y-{YA}-child-nomination" data-locator="y-2025_26-child-nomination">
+                  <option value="none" selected>未提名</option>
+                  <option value="agreed">已商定由一方提名</option>
+                  <option value="disputed">有争议（需人工核实）</option>
+                  <option value="unknown">不确定</option>
+                </select>
+              </div>
+              <div class="field" id="child-nomination-person-field" hidden>
+                <label for="child-nomination-person">整组提名方</label>
+                <select id="child-nomination-person">
+                  <option value="" selected>请选择</option>
+                  <option value="p1">你</option>
+                  <option value="p2">配偶</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 004 §2/§3.2：申索意向分组（渐进披露；会话别名识别） -->
+            <details class="claim-group" id="children-details">
+              <summary>子女 <span class="group-state" id="children-state">未申索</span></summary>
+              <p class="hint">子女是否居港不是这项免税额的一般条件；出生年度／次年额外额按规则与结果解释。</p>
+              <div id="children-list"></div>
+              <div class="actions">
+                <button type="button" id="add-child" class="btn btn-secondary">＋ 添加子女</button>
+              </div>
+            </details>
+
+            <details class="claim-group" id="parents-details">
+              <summary>父母／祖父母 <span class="group-state" id="parents-state">未申索</span></summary>
+              <p class="hint">基本供养可按连续至少六个月同住（没有付足额对价）或适用现金门槛判断；全年同住是另一项额外资格。请确认是否符合相关政府伤残津贴资格；这不等同于已经领取津贴。</p>
+              <div id="parents-list"></div>
+              <div class="actions">
+                <button type="button" id="add-parent" class="btn btn-secondary">＋ 添加长者</button>
+              </div>
+            </details>
+
+            <details class="claim-group" id="siblings-details">
+              <summary>兄弟姊妹 <span class="group-state" id="siblings-state">未申索</span></summary>
+              <p class="hint">仅提供供养款不等于已满足照顾条件；请按实际关系与照顾事实填写。</p>
+              <div id="siblings-list"></div>
+              <div class="actions">
+                <button type="button" id="add-sibling" class="btn btn-secondary">＋ 添加兄弟姊妹</button>
+              </div>
+            </details>
+
+            <details class="claim-group" id="self-disability-details">
+              <summary>本人伤残 <span class="group-state" id="self-disability-state">未申索</span></summary>
+              <p class="hint">这是资格判断，不是医疗评估；不需要诊断、病历或伤残细节。</p>
+              <div class="field">
+                <label for="self-incapacity">你本年度是否因伤残不能工作（符合适用资格）</label>
+                <select id="self-incapacity"
+                        data-locator-template="y-{YA}-subject-p1-incapacity" data-locator="y-2025_26-subject-p1-incapacity">
+                  <option value="" selected>未提供</option>
+                  <option value="true">是（全年）</option>
+                  <option value="false">否（全年）</option>
+                  <option value="unknown">不确定（需要补充资料）</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="claim-personal-disability">
+                  <input type="checkbox" id="claim-personal-disability" aria-label="申索本人伤残免税额"> 申索本人伤残免税额
+                </label>
+              </div>
+            </details>
+
+            <details class="claim-group" id="single-parent-details">
+              <summary>单亲 <span class="group-state" id="single-parent-state">未申索</span></summary>
+              <p class="hint">此项按年度判断主要／独力照顾子女的事实，不是每名子女各加一次。</p>
+              <div class="field">
+                <label for="claim-single-parent">
+                  <input type="checkbox" id="claim-single-parent" aria-label="申索单亲免税额"> 申索单亲免税额
+                </label>
+              </div>
+              <div class="field" id="single-parent-child-field" hidden>
+                <label for="single-parent-child">主要／独力照顾的子女（须先在「子女」分组添加）</label>
+                <select id="single-parent-child">
+                  <option value="" selected>请选择</option>
+                </select>
+              </div>
+            </details>
+
+            <!-- 004 §3.5/§3.6：伤残受养人相关照顾付款（原始事实；不自动生成扣除） -->
+            <details class="claim-group" id="care-details" hidden>
+              <summary>照顾付款（伤残受养人／住宿照顾相关） <span class="group-state" id="care-state">未填写</span></summary>
+              <p class="hint">同一长者不能在同一方案同时申索这项免税额和长者住宿照顾开支扣除；请确认采用哪一项。此处只记录原始付款事实，不会自动生成扣除。</p>
+              <div id="care-list"></div>
+              <div class="actions">
+                <button type="button" id="add-care-payment" class="btn btn-secondary">＋ 添加照顾付款</button>
+              </div>
+            </details>
           </fieldset>
 
           <div class="actions">
@@ -410,7 +900,12 @@
 
       <div class="col-side">
         <section class="card" aria-labelledby="ai-title">
-          <h2 id="ai-title">AI 引导（可选）</h2>
+          <div class="chat-head">
+            <h2 id="ai-title">AI 引导（可选）</h2>
+            <!-- 004 §3.9：紧凑次要按钮；本地区块与模型回答分离 -->
+            <button type="button" id="chat-local-coverage-toggle" class="btn btn-secondary"
+                    aria-expanded="false" aria-controls="chat-local-coverage-panel">支持范围</button>
+          </div>
           {% if model_configured %}
           <p id="ai-state">本地计算可用；AI 已配置：发送前先显示逐字预览，授权只允许单次发送。</p>
           <p>模型回复仅供参考，一律标「未确认」；工具建议以「待你确认」呈现，不替代你对输入与结果的确认。</p>
@@ -434,11 +929,17 @@
           <div class="actions">
             <button type="button" id="chat-send" class="btn btn-primary">发送</button>
           </div>
+          <!-- 005:927/:930：本地覆盖视图（同一 coverage_items() 数据源；非外发） -->
+          <script type="application/json" id="chat-local-coverage-data">{{ coverage_view_json | safe }}</script>
+          <div id="chat-local-coverage-panel" class="chat-local-coverage" hidden></div>
         </section>
 
         <section class="card" aria-labelledby="status-title">
           <h2 id="status-title">计算状态</h2>
           <p id="status-summary">尚未计算／结果摘要会在此显示。</p>
+          <div class="actions">
+            <button type="button" id="resync-session" class="btn btn-secondary" hidden>重新同步</button>
+          </div>
           <ul class="badge-legend" aria-label="结果状态徽标说明">
             <li><span class="badge badge-complete">估算完成</span></li>
             <li><span class="badge badge-partial">部分结果</span></li>
@@ -448,6 +949,20 @@
         </section>
       </div>
     </div>
+
+    <!-- 结果区：四状态徽标＋金额直读 canonical 分项（null≠0；条件式比较单列） -->
+    <section class="card" id="result-section" aria-labelledby="result-title" hidden>
+      <h2 id="result-title">计算结果</h2>
+      <p><span class="badge" id="result-badge">待计算</span></p>
+      <p id="result-stale-note" class="result-stale-note" hidden>
+        <span class="badge badge-partial">输入已更改，结果已失效</span>
+        请重新检查、确认并计算；历史记录仍可按原记录查阅。
+      </p>
+      <dl id="result-amounts"></dl>
+      <div id="result-candidates"></div>
+      <div id="result-steps"></div>
+      <p class="privacy-note">金额直读服务器 canonical 分项；缺组件显示「未能估算」，不以零填补。</p>
+    </section>
 
     <!-- §12.6：记录区三入口语义区分（内存记录／附件下载／原包重放） -->
     <section class="card" id="records-section" aria-labelledby="records-title">
@@ -459,6 +974,7 @@
         <li><strong>原包重放</strong>：按记录原规则快照重新计算，结果标示「历史估算，非当前重新评估」；仅当引擎版本与记录完全一致时可用，与「按当前规则重算」是两个不同入口。</li>
       </ul>
       <p class="privacy-note">清空会话会删除内存记录；已下载或打印的外部副本不会被移除。</p>
+      <div id="records-list" aria-live="polite"></div>
     </section>
 
     <!-- §6 确认摘要对话框：不新增关卡，沿用「确认资料并计算」权威文案 -->
@@ -508,10 +1024,60 @@
   </footer>
 
   <script type="module">
-    // 少量原生 ES 模块：弹窗焦点管理＋Escape；清空经 BroadcastChannel 同步同会话其他标签页。
-    // 金额一律以字符串读取与提交，绝不解析为浮点。
+    // 薪俸税工作台完整链（004/005 §12/§17；002 REQ-2/7/11）：
+    //  - v2 collector（schema 2.0.0；金额一律字符串；null≠0；不补默认资格）；
+    //  - 单一 mutation 队列覆盖 invalidate 与 prepare（同标签页仅一个在途）；
+    //  - Operation ACK（X-Edit-*）驱动 epoch/revision；409 Current 头不自动接纳；
+    //  - clear＝epoch 边界；旧 epoch/已取消/重同步后的迟到响应整体丢弃；
+    //  - 聊天 preview→单次授权→发送；proposal 差异审阅→采用→手动重新确认；
+    //  - 覆盖面板为服务端本地说明，不进 chatHistory、不触发任何外发。
+    // 金额一律以字符串读取与提交，绝不解析为浮点；无任何本地持久化（C5.5）。
 
-    const statusRegion = document.getElementById("status-region");
+    const $id = (id) => document.getElementById(id);
+    const statusRegion = $id("status-region");
+    const statusSummary = $id("status-summary");
+    const errorSummary = $id("error-summary");
+    const errorCount = $id("error-count");
+    const errorList = $id("error-list");
+    const form = $id("calc-form");
+    const confirmDialog = $id("confirm-dialog");
+    const confirmSummary = $id("confirm-summary");
+    const confirmSubmit = $id("confirm-submit");
+    const primaryButton = $id("confirm-and-calc");
+    const resyncButton = $id("resync-session");
+    const resultSection = $id("result-section");
+    const resultBadge = $id("result-badge");
+    const resultAmounts = $id("result-amounts");
+    const resultCandidates = $id("result-candidates");
+    const resultSteps = $id("result-steps");
+    const resultStaleNote = $id("result-stale-note");
+    const recordsList = $id("records-list");
+
+    const AMOUNT_RE = /^(?:0|[1-9][0-9]{0,29})(\.[0-9]{1,2})?$/;
+    const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+    function isAmount(text) { return AMOUNT_RE.test(text); }
+    function isIsoDate(text) {
+      const match = DATE_RE.exec(text);
+      if (!match) return false;
+      const probe = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+      return probe.getUTCFullYear() === Number(match[1])
+        && probe.getUTCMonth() === Number(match[2]) - 1
+        && probe.getUTCDate() === Number(match[3]);
+    }
+    function makeEl(tag, className, text) {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      if (text !== undefined) el.textContent = text;
+      return el;
+    }
+    function triText(value) {
+      return value === "true" ? "是" : value === "false" ? "否" : value === "unknown" ? "不确定" : "未提供";
+    }
+    function yearWindow(year) {
+      const start = Number(year.slice(0, 4));
+      return { from: start + "-04-01", to: (start + 1) + "-04-01" };
+    }
+    function yearText(year) { return year.replace("_", "/"); }
 
     // —— 弹窗：打开后焦点进入，Escape 关闭，焦点回触发控件（§9）——
     let dialogTrigger = null;
@@ -546,7 +1112,9 @@
     }
 
     // —— 安全 POST 助手：CSRF 能力经安全 GET 探测（C5.2/C5.3，同「清空本次资料」
-    // 既有接线模式）；浏览器对同源 POST 自动附 Origin ——
+    // 既有接线模式）；浏览器对同源 POST 自动附 Origin。If-Match 仅在
+    // prepare 调用点显式传入；invalidate 使用闭合两键 body（expected_session_epoch／
+    // expected_input_revision），不做全局自动补头（002 §4.1）。——
     let csrfToken = null;
     async function csrfTokenOnce() {
       if (csrfToken === null) {
@@ -555,26 +1123,1928 @@
       }
       return csrfToken;
     }
-    async function httpJson(method, path, body) {
+    async function httpJson(method, path, body, ifMatch) {
       const token = await csrfTokenOnce();
       const options = { method, credentials: "same-origin", headers: { "X-CSRF-Token": token } };
       if (body !== undefined) {
         options.headers["Content-Type"] = "application/json";
         options.body = JSON.stringify(body);
       }
+      if (ifMatch) options.headers["If-Match"] = ifMatch;
       return fetch(path, options);
     }
+    function editIfMatch(epoch, revision) {
+      return '"edit-' + String(epoch) + "-" + String(revision) + '"';
+    }
+    async function readError(response) {
+      try {
+        const body = await response.json();
+        if (body && body.error) {
+          return { code: body.error.code || "", message_zh: body.error.message_zh || "", payload: body };
+        }
+        if (body && Array.isArray(body.questions)) {
+          return { code: "", message_zh: "", payload: body };
+        }
+      } catch (err) {
+        // 响应体非 JSON：按未知错误处理，由调用方兜底文案提示
+      }
+      return { code: "", message_zh: "", payload: null };
+    }
 
-    // —— AI 对话面板（REQ-14 §7/§12.5：预览→授权→单次发送；拒绝/错误后本地照常）——
-    // 金额一律以字符串原样展示；模型内容只以 textContent 写入，绝不当作标记语言渲染。
-    const consentDialog = document.getElementById("consent-dialog");
-    const consentAllow = document.getElementById("consent-allow");
-    const chatInput = document.getElementById("chat-input");
-    const chatSend = document.getElementById("chat-send");
-    const chatMessages = document.getElementById("chat-messages");
+    // =====================================================================
+    // 编辑器状态机（004 §7／005 §12：单一 mutation 队列＋Operation ACK）
+    // =====================================================================
+    const editor = {
+      initialized: false,     // 已读到初始 epoch/revision
+      epoch: null,
+      revision: null,         // 服务器已确认版本（ACK 驱动）
+      generation: 0,          // 本地草稿 generation
+      dirty: false,           // 有未被 ACK 覆盖的本地编辑
+      inFlight: null,         // {id, kind, epoch, nonce, gen}
+      queue: [],              // 待办 mutation（invalidate/prepare）
+      opSeq: 0,
+      nonce: 0,               // clear/resync 边界：旧 nonce 响应整体丢弃
+      conflict: null,         // {message}：409/ACK 丢失/403 → 显式重同步前阻断
+      prepared: null,         // {prepared_id, input_hash, expected_binding, generation}
+      currentResultGen: null, // 当前结果对应的 generation
+      records: [],            // {record_id, payload, historical}
+    };
+
+    function editorBlocked() {
+      return !editor.initialized || editor.conflict !== null;
+    }
+    function editorBusy() {
+      return editor.inFlight !== null;
+    }
+    function updateButtons() {
+      const blocked = editorBlocked();
+      const busy = editorBusy();
+      const dirty = editor.dirty;
+      // dirty/conflict/在途：confirm/calculate/send 全部禁用（004 §7/§8.24）
+      primaryButton.disabled = blocked || busy || dirty;
+      confirmSubmit.disabled = blocked || busy || dirty;
+      const chatSendBtn = $id("chat-send");
+      if (chatSendBtn) chatSendBtn.disabled = blocked || busy || dirty;
+      resyncButton.hidden = editor.conflict === null;
+      form.dataset.generation = String(editor.generation);
+      form.dataset.ackedEpoch = editor.epoch === null ? "" : String(editor.epoch);
+      form.dataset.ackedRevision = editor.revision === null ? "" : String(editor.revision);
+      form.dataset.editorState = editor.conflict !== null
+        ? "conflict"
+        : !editor.initialized
+          ? "blocked"
+          : busy
+            ? "in-flight"
+            : dirty
+              ? "dirty"
+              : "idle";
+    }
+
+    function enterConflict(message) {
+      editor.conflict = { message: message };
+      statusSummary.textContent = message + "草稿已保留；请点击「重新同步」读取当前会话版本，重新核对资料后手动确认。";
+      statusRegion.textContent = message;
+      updateButtons();
+    }
+
+    // —— 编辑即时失效：先于任何 ACK（004 §7「编辑失效先于 ack」）——
+    function noteEdit() {
+      editor.generation += 1;
+      editor.dirty = true;
+      // 立即清除旧 confirmation/prepared/结果「当前有效」标记
+      editor.prepared = null;
+      editor.currentResultGen = null;
+      if (!resultSection.hidden) {
+        resultStaleNote.hidden = false;
+        resultSection.setAttribute("data-stale", "true");
+      }
+      if (!confirmDialog.hidden) {
+        // 弹窗摘要对应旧草稿：禁用确认，提示返回修改
+        confirmSubmit.disabled = true;
+        statusRegion.textContent = "资料已更改：请「返回修改」后重新按「确认资料并计算」（旧确认已即时失效）。";
+      }
+      enqueueInvalidateForEdit();
+      updateButtons();
+    }
+
+    // 004 §7：invalidate 在途期间只合并草稿编辑（其 ACK 覆盖合并草稿），
+    // 不发送并行 invalidate、不复用旧 revision；仅当在途 op 为 prepare 时
+    // 才排队 invalidate（等 prepare 的 operation ACK 后用 ACK 版本发送）。
+    function enqueueInvalidateForEdit() {
+      if (editor.conflict !== null || !editor.initialized) return;
+      if (editor.inFlight !== null && editor.inFlight.kind === "invalidate") return;
+      if (editor.queue.some((op) => op.kind === "invalidate")) return;
+      enqueueMutation({ kind: "invalidate" });
+    }
+
+    function enqueueMutation(op) {
+      if (editor.conflict !== null || !editor.initialized) return; // 冲突/未初始化：草稿保留在本地
+      op.id = ++editor.opSeq;
+      op.nonce = editor.nonce;
+      op.epoch = editor.epoch;
+      op.gen = editor.generation;
+      editor.queue.push(op);
+      pumpQueue();
+    }
+
+    function pumpQueue() {
+      if (editor.inFlight !== null) return; // 单飞：同标签页仅一个 mutation 在途
+      if (editor.conflict !== null || !editor.initialized) return;
+      const op = editor.queue.shift();
+      if (!op) return;
+      editor.inFlight = op;
+      updateButtons();
+      if (op.kind === "invalidate") {
+        void runInvalidate(op);
+      } else if (op.kind === "prepare") {
+        void runPrepare(op);
+      }
+    }
+
+    // ACK 关联处理（005 §12.2）：仅 Applied=1 推进内部已确认版本；
+    // 旧 epoch／已取消／重同步后的响应整体忽略。
+    function ackApplies(op, response) {
+      if (op.nonce !== editor.nonce) return false;          // clear/resync 之后到达
+      if (editor.inFlight === null || op.id !== editor.inFlight.id) return false; // 已取消/被取代
+      if (op.epoch !== editor.epoch) return false;          // 旧 epoch
+      return true;
+    }
+    function parseAckInt(raw) {
+      // 005 §12.2：Operation ACK 版本是十进制非负整数；缺 header／空串／
+      // 其他形状不得经 Number(null)=0 被误接纳。
+      if (typeof raw !== "string") return null;
+      const text = raw.trim();
+      if (!/^[0-9]+$/.test(text)) return null;
+      const value = Number(text);
+      return Number.isSafeInteger(value) ? value : null;
+    }
+    function readAckPair(response) {
+      if (response.headers.get("X-Edit-Applied") !== "1") return null;
+      const epoch = parseAckInt(response.headers.get("X-Edit-Operation-Epoch"));
+      const revision = parseAckInt(response.headers.get("X-Edit-Operation-Revision"));
+      if (epoch === null || revision === null) return null;
+      return { epoch: epoch, revision: revision };
+    }
+    function inspectOperationAck(op, response) {
+      if (response.headers.get("X-Edit-Applied") !== "1") return "missing";
+      const epoch = parseAckInt(response.headers.get("X-Edit-Operation-Epoch"));
+      const revision = parseAckInt(response.headers.get("X-Edit-Operation-Revision"));
+      if (epoch === null || revision === null) return "malformed";
+      if (epoch !== op.epoch) return "mismatch";
+      return { epoch: epoch, revision: revision };
+    }
+    function applyOperationAck(op, response) {
+      const ack = inspectOperationAck(op, response);
+      if (typeof ack === "string") return null;
+      editor.epoch = ack.epoch;
+      editor.revision = ack.revision;
+      return ack;
+    }
+    function operationAckMessage(problem, action) {
+      if (problem === "mismatch") {
+        return action + "未获本操作版本确认（ACK 与请求不匹配）：请重新同步。";
+      }
+      if (problem === "malformed") {
+        return action + "未获版本确认（ACK 畸形）：请重新同步。";
+      }
+      return action + "未获版本确认（ACK 缺失）：请重新同步。";
+    }
+    function finishOperation(op) {
+      if (editor.inFlight !== null && editor.inFlight.id === op.id) {
+        editor.inFlight = null;
+      }
+      updateButtons();
+      pumpQueue();
+    }
+    function failOperation(op, message) {
+      // 004 §7：失败/冲突状态先于队列推进；清掉本操作在途标记后不 pump。
+      if (editor.inFlight !== null && editor.inFlight.id === op.id) {
+        editor.inFlight = null;
+      }
+      enterConflict(message);
+    }
+    function ensureInvalidateAfterAck() {
+      editor.dirty = true;
+      enqueueInvalidateForEdit();
+    }
+
+    async function runInvalidate(op) {
+      let response = null;
+      let failed = null;
+      try {
+        response = await httpJson("POST", "/api/v1/calc/invalidate", {
+          expected_session_epoch: op.epoch,
+          expected_input_revision: editor.revision,
+        });
+      } catch (err) {
+        failed = err;
+      }
+      if (!ackApplies(op, response || {})) return; // 迟到/旧 epoch/已取消：整体丢弃
+      if (failed || response === null) {
+        failOperation(op, "同步失败（网络异常）：本次编辑失效未能确认，未重试。");
+        return;
+      }
+      if (response.status === 200) {
+        const ack = applyOperationAck(op, response);
+        if (ack === null) {
+          failOperation(
+            op,
+            operationAckMessage(
+              inspectOperationAck(op, response), "编辑失效"
+            )
+          );
+          return;
+        }
+        editor.dirty = false;
+        finishOperation(op);
+        return;
+      }
+      if (response.status === 409) {
+        // 409 Current 头只读，绝不自动接纳（004 §7）
+        failOperation(
+          op,
+          "会话资料已在其他地方更新（版本冲突）：本次编辑未生效，未自动重发。"
+        );
+      } else if (response.status === 403) {
+        // 403 不带版本信息：不推进版本、不读业务 body
+        failOperation(op, "请求被安全校验拒绝（未推进任何版本）。");
+      } else {
+        failOperation(
+          op, "编辑失效未获确认（HTTP " + response.status + "）：未重试。"
+        );
+      }
+    }
+
+    async function runPrepare(op) {
+      let response = null;
+      let failed = null;
+      try {
+        response = await httpJson("POST", "/api/v1/calc/prepare", {
+          tax_type: "salaries_tax",
+          schema_version: "2.0.0",
+          input: op.input,
+        }, editIfMatch(op.epoch, editor.revision));
+      } catch (err) {
+        failed = err;
+      }
+      if (!ackApplies(op, response || {})) return;
+      if (failed || response === null) {
+        failOperation(op, "提交失败（网络异常）：未重试；草稿已保留。");
+        return;
+      }
+      // 001→201/422/413/可响应 500 均可能带本操作 ACK（reservation 已发生）；
+      // ACK 推进版本与 payload 是否陈旧是两件事（004 §7）。
+      const ackProblem = inspectOperationAck(op, response);
+      const ackValid = typeof ackProblem === "object";
+      const payload = await response.json().catch(() => null);
+      if (!ackApplies(op, response)) return; // 读 body 期间 clear/resync
+      if (response.status === 409) {
+        failOperation(
+          op,
+          "会话资料已在其他地方更新（版本冲突）：本次提交未生效，未自动重发。"
+        );
+        return;
+      }
+      if (response.status === 403) {
+        failOperation(op, "请求被安全校验拒绝（未推进任何版本）。");
+        return;
+      }
+      if (!ackValid) {
+        failOperation(
+          op, operationAckMessage(ackProblem, "提交")
+        );
+        return;
+      }
+      editor.epoch = ackProblem.epoch;
+      editor.revision = ackProblem.revision;
+      if (response.status === 201) {
+        if (!payload) {
+          failOperation(op, "提交响应不可解析：未取得 prepared；请重新同步。");
+          return;
+        }
+        if (op.gen === editor.generation) {
+          editor.prepared = {
+            prepared_id: payload.prepared_id,
+            input_hash: payload.input_hash,
+            expected_binding: payload.expected_binding,
+            generation: op.gen,
+          };
+          finishOperation(op);
+          await runConfirmAndExecute(op.gen);
+          return;
+        }
+        // 草稿已在 prepare 在途期间更新：payload 作废，ACK 仍已推进版本；
+        // 排队 invalidate（用 ACK 后版本），等待用户重新发起（不自动 prepare）
+        finishOperation(op);
+        ensureInvalidateAfterAck();
+        statusRegion.textContent = "资料已在提交期间更改：较早的提交结果已作废；请核对后重新确认（未自动重新提交）。";
+        return;
+      }
+      finishOperation(op);
+      if (response.status === 422) {
+        if (op.gen !== editor.generation) {
+          ensureInvalidateAfterAck();
+          statusRegion.textContent = "较早提交返回的补充资料请求已作废（资料已更改）；请重新检查。";
+          return;
+        }
+        if (!payload) {
+          statusRegion.textContent = "补充资料请求不可解析：请重新检查并提交。";
+          showError([{ target: null, message: statusRegion.textContent }]);
+          return;
+        }
+        showQuestions(payload);
+        return;
+      }
+      if (op.gen !== editor.generation) {
+        ensureInvalidateAfterAck();
+      }
+      const detail = (payload && payload.error) || {};
+      statusRegion.textContent = "提交未能完成：" + (detail.message_zh || ("HTTP " + response.status));
+      showError([{ target: null, message: statusRegion.textContent }]);
+    }
+
+    async function runConfirmAndExecute(gen) {
+      const prepared = editor.prepared;
+      if (!prepared || prepared.generation !== gen) return;
+      // 本轮身份：clear/resync 会递增 nonce（并可能换 epoch）。任一响应返回
+      // 后先重核；不匹配则整轮丢弃，不写记录/结果/状态。普通编辑只改
+      // generation：合法完成的旧计算按既有规则存为历史 record。
+      const roundNonce = editor.nonce;
+      const roundEpoch = editor.epoch;
+      const roundCurrent = () => (
+        editor.nonce === roundNonce
+        && editor.initialized
+        && editor.epoch === roundEpoch
+      );
+      statusRegion.textContent = "正在确认（confirm）……";
+      let confirmed;
+      try {
+        const response = await httpJson("POST", "/api/v1/calc/confirm", {
+          prepared_id: prepared.prepared_id,
+          canonical_input_hash: prepared.input_hash,
+          expected_binding: prepared.expected_binding,
+          acknowledge: true,
+        });
+        if (!roundCurrent()) return;
+        if (!response.ok) {
+          const err = await readError(response);
+          if (!roundCurrent()) return;
+          if (response.status === 409) {
+            editor.prepared = null;
+            statusRegion.textContent = "确认能力已失效（资料或规则已变化）：请重新检查并确认。";
+            showError([{ target: null, message: statusRegion.textContent }]);
+            return;
+          }
+          statusRegion.textContent = "确认未能完成：" + (err.message_zh || ("HTTP " + response.status));
+          showError([{ target: null, message: statusRegion.textContent }]);
+          return;
+        }
+        confirmed = await response.json();
+        if (!roundCurrent()) return;
+      } catch (err) {
+        if (!roundCurrent()) return;
+        statusRegion.textContent = "确认未能完成（网络异常）。";
+        return;
+      }
+      statusRegion.textContent = "正在计算（execute）……";
+      let payload;
+      try {
+        const response = await httpJson("POST", "/api/v1/calc/salaries-tax", {
+          confirmation_id: confirmed.confirmation_id,
+        });
+        if (!roundCurrent()) return;
+        if (!response.ok) {
+          const err = await readError(response);
+          if (!roundCurrent()) return;
+          statusRegion.textContent = err.code === "E_CONFIRMATION_STALE"
+            ? "确认能力已失效或会话已清空：本次执行未产生当前结果（历史记录不受影响）。"
+            : "计算未能完成：" + (err.message_zh || ("HTTP " + response.status));
+          showError([{ target: null, message: statusRegion.textContent }]);
+          return;
+        }
+        payload = await response.json();
+        if (!roundCurrent()) return;
+      } catch (err) {
+        if (!roundCurrent()) return;
+        statusRegion.textContent = "计算未能完成（网络异常）。";
+        return;
+      }
+      // 迟到本地计算：合法完成的旧计算只可作为历史 record，不得成为当前结果
+      const execution = (payload && payload.execution) || null;
+      const isCurrent = editor.generation === gen
+        && (!execution || execution.editor_result === "current");
+      addRecordFromPayload(payload, !isCurrent);
+      if (isCurrent) {
+        renderResult(payload, gen);
+      } else {
+        statusRegion.textContent = "一次较早的计算已完成并存为历史记录；因资料已更改，不作为当前结果。";
+        statusSummary.textContent = "较早结果已存入计算记录（历史）；请按当前资料重新确认计算。";
+      }
+    }
+
+    // =====================================================================
+    // 家庭及资格：会话内主体注册表＋渐进披露控件（004 §3）
+    // =====================================================================
+    const yearSelect = $id("assessment-year");
+    const marriedSelect = $id("married-status");
+    const spouseDetails = $id("spouse-details");
+    const spouseSalaryAi = $id("spouse-salary-ai");
+    const spouseIncomeBlock = $id("spouse-income-block");
+    const assessmentExtras = $id("assessment-extras");
+    const candidateSeparate = $id("candidate-separate");
+    const candidateJoint = $id("candidate-joint");
+    const salarySelection = $id("salary-selection");
+
+    // 受养人条目模型（DOM 由其渲染；收集从模型读取；proposal 采用=解析回模型）
+    const dependants = [];       // {id, kind, alias, birth, basis, actor, facts:{key:tri|custom}, periods:{key:[{from,to,value}]}, cash, claims:{kind:bool}}
+    const historicalSubjects = []; // {id, alias}（已注册但非本年度 participant）
+    let depSeq = 0;
+    let historicalSeq = 2;       // p3 起（p1=你、p2=配偶）
+    const carePayments = [];     // {id, payer, subject, paidOn, amount, from, to, residential, paidToHome, homeBasis, homePeriods}
+    let careSeq = 0;
+
+    const SUBJECT_FACT_DEFS = {
+      unmarried: { wire: "unmarried", label: "该年度是否未婚", short: "unmarried" },
+      education: { wire: "full_time_education", label: "该年度是否全日制教育", short: "education" },
+      incapacity: { wire: "incapacitated_for_work", label: "是否因伤残不能工作", short: "incapacity" },
+      residence: { wire: "ordinarily_resident_hk", label: "是否通常居住于香港", short: "hk-residence" },
+      daa: { wire: "govt_disability_allowance", label: "是否符合相关政府伤残津贴资格", short: "daa" },
+    };
+    const RELATION_FACT_DEFS = {
+      maintained: { wire: "maintained", label: "是否供养（期间）", short: "maintained" },
+      cohabit: { wire: "cohabit_non_full_consideration", label: "是否全年连续同住（没有付足额对价）", short: "cohabit" },
+      care: { wire: "sole_or_predominant_care", label: "是否独力或主要照顾", short: "care" },
+    };
+    const DEP_KIND_DEFS = {
+      child: {
+        legend: "子女", kinship: "child",
+        bases: [["birth", "亲生"], ["adoption", "收养"], ["step", "继子女"], ["child_of_adoptive_parent", "养父母的子女"], ["other", "其他"], ["unknown", "不确定"]],
+        subjectFacts: ["unmarried", "education", "incapacity", "daa"],
+        relationFacts: ["maintained", "care"],
+        claims: [["child", "申索子女免税额"], ["disabled_dependant", "申索伤残受养人免税额（此子女）"]],
+      },
+      parent: {
+        legend: "长者", kinshipOptions: [["parent", "父母"], ["grandparent", "祖父母"]],
+        bases: [["birth", "亲生"], ["adoption", "收养"], ["step", "继"], ["other", "其他"], ["unknown", "不确定"]],
+        subjectFacts: ["residence", "daa"],
+        relationFacts: ["maintained", "cohabit"],
+        cash: true,
+        claims: [["__kind__", "申索父母／祖父母免税额"], ["parent_cohabitation_additional", "申索全年同住额外额"]],
+      },
+      sibling: {
+        legend: "兄弟姊妹", kinship: "sibling",
+        bases: [["full_blood", "同胞"], ["half_blood", "半血亲"], ["adoption", "收养"], ["step", "继"], ["other", "其他"], ["unknown", "不确定"]],
+        subjectFacts: ["unmarried", "education", "incapacity"],
+        relationFacts: ["maintained", "care"],
+        claims: [["sibling", "申索兄弟姊妹免税额"]],
+      },
+    };
+
+    function currentYear() { return yearSelect.value; }
+
+    // 所有带 data-locator-template 的元素在年度变化时同步 data-locator（004 §3.6 年度限定）
+    function refreshLocators() {
+      const year = currentYear();
+      for (const el of document.querySelectorAll("[data-locator-template]")) {
+        el.setAttribute("data-locator", el.getAttribute("data-locator-template").split("{YA}").join(year));
+      }
+    }
+
+    function personLabel(pid) {
+      if (pid === "p1") return "你";
+      if (pid === "p2") return ($id("spouse-alias").value || "配偶").trim() || "配偶";
+      const hist = historicalSubjects.find((s) => s.id === pid);
+      if (hist) return (hist.alias || "历史关系对象") + "（" + pid + "）";
+      const dep = dependants.find((d) => d.id === pid);
+      if (dep) return dep.alias || dep.id;
+      return pid;
+    }
+
+    // —— 通用 TF（三态期间）控件：默认「未提供/是/否/不确定（全年）」，可分段 ——
+    function buildTfControl(opts) {
+      // opts: {label, locatorTemplate, owner} → 返回 {root, read()}
+      const year = currentYear();
+      const win = yearWindow(year);
+      const wrap = makeEl("div", "field tf-control");
+      const label = makeEl("label", null, opts.label);
+      const select = document.createElement("select");
+      select.setAttribute("aria-label", opts.label);
+      select.setAttribute("data-locator-template", opts.locatorTemplate);
+      select.setAttribute("data-locator", opts.locatorTemplate.split("{YA}").join(year));
+      const optionsList = [
+        ["", "未提供"],
+        ["true", "是（全年）"],
+        ["false", "否（全年）"],
+        ["unknown", "不确定（全年）"],
+        ["custom", "分段填写……"],
+      ];
+      for (const pair of optionsList) {
+        const option = document.createElement("option");
+        option.value = pair[0];
+        option.textContent = pair[1];
+        select.appendChild(option);
+      }
+      label.htmlFor = "";
+      label.appendChild(select);
+      wrap.appendChild(label);
+      const rowsWrap = makeEl("div", "tf-rows");
+      rowsWrap.hidden = true;
+      wrap.appendChild(rowsWrap);
+      const addBtn = makeEl("button", "btn btn-secondary", "＋ 添加期间");
+      addBtn.type = "button";
+      addBtn.hidden = true;
+      wrap.appendChild(addBtn);
+
+      function addRow(from, to, value) {
+        const row = makeEl("div", "tf-row");
+        const fromInput = document.createElement("input");
+        fromInput.type = "text";
+        fromInput.placeholder = "YYYY-MM-DD";
+        fromInput.setAttribute("aria-label", opts.label + "：开始日期（含）");
+        fromInput.value = from || win.from;
+        const toInput = document.createElement("input");
+        toInput.type = "text";
+        toInput.placeholder = "YYYY-MM-DD";
+        toInput.setAttribute("aria-label", opts.label + "：结束日期（不含）");
+        toInput.value = to || win.to;
+        const tri = document.createElement("select");
+        tri.setAttribute("aria-label", opts.label + "：该期间是否成立");
+        for (const pair of [["true", "是"], ["false", "否"], ["unknown", "不确定"]]) {
+          const option = document.createElement("option");
+          option.value = pair[0];
+          option.textContent = pair[1];
+          tri.appendChild(option);
+        }
+        tri.value = value || "unknown";
+        const remove = makeEl("button", "btn btn-secondary", "移除该期间");
+        remove.type = "button";
+        remove.addEventListener("click", () => { row.remove(); noteEdit(); });
+        const f1 = makeEl("div", "field"); f1.appendChild(fromInput);
+        const f2 = makeEl("div", "field"); f2.appendChild(toInput);
+        const f3 = makeEl("div", "field"); f3.appendChild(tri);
+        row.appendChild(f1); row.appendChild(f2); row.appendChild(f3); row.appendChild(remove);
+        rowsWrap.appendChild(row);
+        for (const el of [fromInput, toInput, tri]) {
+          el.addEventListener("input", noteEdit);
+          el.addEventListener("change", noteEdit);
+        }
+      }
+      select.addEventListener("change", () => {
+        const custom = select.value === "custom";
+        rowsWrap.hidden = !custom;
+        addBtn.hidden = !custom;
+        if (custom && rowsWrap.childElementCount === 0) addRow();
+        noteEdit();
+      });
+      addBtn.addEventListener("click", () => { addRow(); noteEdit(); });
+
+      return {
+        root: wrap,
+        // 返回 TF 数组；未提供 → null（调用方省略该键；缺失≠否）
+        read() {
+          if (select.value === "") return null;
+          if (select.value !== "custom") {
+            return [{ from: win.from, to: win.to, value: select.value === "true" ? true : select.value === "false" ? false : "unknown" }];
+          }
+          const periods = [];
+          for (const row of rowsWrap.querySelectorAll(".tf-row")) {
+            const inputs = row.querySelectorAll("input");
+            const triSel = row.querySelector("select");
+            periods.push({
+              from: inputs[0].value.trim(),
+              to: inputs[1].value.trim(),
+              value: triSel.value === "true" ? true : triSel.value === "false" ? false : "unknown",
+            });
+          }
+          return periods;
+        },
+        // proposal 采用：以 TF 数组回填
+        write(periods) {
+          if (!Array.isArray(periods) || periods.length === 0) return;
+          const single = periods.length === 1
+            && periods[0].from === win.from && periods[0].to === win.to;
+          if (single) {
+            const v = periods[0].value;
+            select.value = v === true ? "true" : v === false ? "false" : "unknown";
+            rowsWrap.hidden = true;
+            addBtn.hidden = true;
+            rowsWrap.textContent = "";
+            return;
+          }
+          select.value = "custom";
+          rowsWrap.hidden = false;
+          addBtn.hidden = false;
+          rowsWrap.textContent = "";
+          for (const p of periods) {
+            addRow(p.from, p.to, p.value === true ? "true" : p.value === false ? "false" : "unknown");
+          }
+        },
+      };
+    }
+
+    // —— 婚姻期间编辑器（004 §3.8：顺序配偶；spouse 选择含历史对象）——
+    const marriagePeriods = $id("marriage-periods");
+    function spouseOptions() {
+      const options = [{ value: "p2", text: personLabel("p2") + "（本年度参与人）" }];
+      for (const hist of historicalSubjects) {
+        options.push({ value: hist.id, text: (hist.alias || hist.id) + "（仅为该期间历史关系对象，不是本年度参与人）" });
+      }
+      return options;
+    }
+    function refreshMarriageSpouseSelects() {
+      for (const sel of marriagePeriods.querySelectorAll("select[data-role='spouse']")) {
+        const current = sel.value;
+        sel.textContent = "";
+        for (const opt of spouseOptions()) {
+          const option = document.createElement("option");
+          option.value = opt.value;
+          option.textContent = opt.text;
+          sel.appendChild(option);
+        }
+        if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+      }
+    }
+    function addMarriageRow(from, to, value, spouseId) {
+      const year = currentYear();
+      const win = yearWindow(year);
+      const row = makeEl("div", "tf-row marriage-row");
+      const fromInput = document.createElement("input");
+      fromInput.type = "text"; fromInput.placeholder = "YYYY-MM-DD";
+      fromInput.setAttribute("aria-label", "婚姻期间开始（含）");
+      fromInput.value = from || win.from;
+      const toInput = document.createElement("input");
+      toInput.type = "text"; toInput.placeholder = "YYYY-MM-DD";
+      toInput.setAttribute("aria-label", "婚姻期间结束（不含）");
+      toInput.value = to || win.to;
+      const valueSel = document.createElement("select");
+      valueSel.setAttribute("aria-label", "该期间婚姻状态");
+      for (const pair of [["married", "已婚"], ["unmarried", "未婚"], ["unknown", "不确定"]]) {
+        const option = document.createElement("option");
+        option.value = pair[0]; option.textContent = pair[1];
+        valueSel.appendChild(option);
+      }
+      valueSel.value = value || "married";
+      const spouseSel = document.createElement("select");
+      spouseSel.setAttribute("aria-label", "该期间配偶（会话内已登记人物）");
+      spouseSel.setAttribute("data-role", "spouse");
+      for (const opt of spouseOptions()) {
+        const option = document.createElement("option");
+        option.value = opt.value; option.textContent = opt.text;
+        spouseSel.appendChild(option);
+      }
+      spouseSel.value = spouseId || "p2";
+      const remove = makeEl("button", "btn btn-secondary", "移除该期间");
+      remove.type = "button";
+      remove.addEventListener("click", () => { row.remove(); noteEdit(); });
+      const f1 = makeEl("div", "field"); f1.appendChild(fromInput);
+      const f2 = makeEl("div", "field"); f2.appendChild(toInput);
+      const f3 = makeEl("div", "field"); f3.appendChild(valueSel);
+      const f4 = makeEl("div", "field"); f4.appendChild(spouseSel);
+      row.appendChild(f1); row.appendChild(f2); row.appendChild(f3); row.appendChild(f4); row.appendChild(remove);
+      const syncSpouseVisibility = () => {
+        f4.hidden = valueSel.value !== "married";
+      };
+      valueSel.addEventListener("change", () => { syncSpouseVisibility(); noteEdit(); });
+      syncSpouseVisibility();
+      for (const el of [fromInput, toInput, spouseSel]) {
+        el.addEventListener("input", noteEdit);
+        el.addEventListener("change", noteEdit);
+      }
+      marriagePeriods.appendChild(row);
+    }
+    function readMarriagePeriods() {
+      const periods = [];
+      for (const row of marriagePeriods.querySelectorAll(".marriage-row")) {
+        const inputs = row.querySelectorAll("input");
+        const sels = row.querySelectorAll("select");
+        const value = sels[0].value;
+        const period = { from: inputs[0].value.trim(), to: inputs[1].value.trim(), value: value };
+        if (value === "married") period.spouse_id = sels[1].value;
+        periods.push(period);
+      }
+      return periods;
+    }
+    $id("add-marriage-period").addEventListener("click", () => { addMarriageRow(); noteEdit(); });
+    $id("add-historical-subject").addEventListener("click", () => {
+      historicalSeq += 1;
+      const id = "p" + String(historicalSeq);
+      const entry = { id: id, alias: "历史关系对象 " + (historicalSeq - 2) };
+      historicalSubjects.push(entry);
+      const wrap = makeEl("div", "field");
+      const label = makeEl("label", null, "历史关系对象会话别名（" + id + "）");
+      const input = document.createElement("input");
+      input.type = "text";
+      input.autocomplete = "off";
+      input.value = entry.alias;
+      input.setAttribute("data-locator-template", "request-subject-" + id + "-alias");
+      input.setAttribute("data-locator", "request-subject-" + id + "-alias");
+      input.addEventListener("input", () => {
+        entry.alias = input.value;
+        refreshMarriageSpouseSelects();
+        noteEdit();
+      });
+      label.htmlFor = "";
+      label.appendChild(input);
+      wrap.appendChild(label);
+      const hint = makeEl("p", "hint", "仅为历史期间关系对象，不是本年度参与人；不需要填写其收入或生日。");
+      wrap.appendChild(hint);
+      $id("historical-subjects").appendChild(wrap);
+      refreshMarriageSpouseSelects();
+      noteEdit();
+      input.focus();
+    });
+
+    // —— 分居期间编辑器（tri 期间；不填写＝不提供该事实）——
+    const livingApartPeriods = $id("living-apart-periods");
+    function addLivingApartRow(from, to, value) {
+      const win = yearWindow(currentYear());
+      const row = makeEl("div", "tf-row living-apart-row");
+      const fromInput = document.createElement("input");
+      fromInput.type = "text"; fromInput.placeholder = "YYYY-MM-DD";
+      fromInput.setAttribute("aria-label", "分居说明期间开始（含）");
+      fromInput.value = from || win.from;
+      const toInput = document.createElement("input");
+      toInput.type = "text"; toInput.placeholder = "YYYY-MM-DD";
+      toInput.setAttribute("aria-label", "分居说明期间结束（不含）");
+      toInput.value = to || win.to;
+      const tri = document.createElement("select");
+      tri.setAttribute("aria-label", "该期间是否分居");
+      for (const pair of [["false", "未分居"], ["true", "分居"], ["unknown", "不确定"]]) {
+        const option = document.createElement("option");
+        option.value = pair[0]; option.textContent = pair[1];
+        tri.appendChild(option);
+      }
+      tri.value = value || "false";
+      const remove = makeEl("button", "btn btn-secondary", "移除该期间");
+      remove.type = "button";
+      remove.addEventListener("click", () => { row.remove(); noteEdit(); });
+      const f1 = makeEl("div", "field"); f1.appendChild(fromInput);
+      const f2 = makeEl("div", "field"); f2.appendChild(toInput);
+      const f3 = makeEl("div", "field"); f3.appendChild(tri);
+      row.appendChild(f1); row.appendChild(f2); row.appendChild(f3); row.appendChild(remove);
+      for (const el of [fromInput, toInput, tri]) {
+        el.addEventListener("input", noteEdit);
+        el.addEventListener("change", noteEdit);
+      }
+      livingApartPeriods.appendChild(row);
+    }
+    $id("add-living-apart-period").addEventListener("click", () => { addLivingApartRow(); noteEdit(); });
+    function readLivingApart() {
+      const periods = [];
+      for (const row of livingApartPeriods.querySelectorAll(".living-apart-row")) {
+        const inputs = row.querySelectorAll("input");
+        const tri = row.querySelector("select");
+        periods.push({
+          from: inputs[0].value.trim(),
+          to: inputs[1].value.trim(),
+          value: tri.value === "true" ? true : tri.value === "false" ? false : "unknown",
+        });
+      }
+      return periods;
+    }
+
+    // —— 受养人条目（004 §3.2–§3.5：会话别名、渐进披露、可移除）——
+    function addDependant(kind) {
+      const def = DEP_KIND_DEFS[kind];
+      depSeq += 1;
+      const seq = depSeq;
+      const entry = {
+        id: "d" + String(seq),
+        kind: kind,
+        alias: def.legend + " " + String(seq),
+        birth: "",
+        basis: "",
+        actor: "p1",
+        claims: {},
+        tfControls: {},
+        cashInput: null,
+        relSelect: null,
+        claimBoxes: [],
+      };
+      dependants.push(entry);
+      const listHost = $id(kind === "child" ? "children-list" : kind === "parent" ? "parents-list" : "siblings-list");
+      const fieldset = document.createElement("fieldset");
+      fieldset.className = "dep-entry";
+      fieldset.id = "dep-" + entry.id;
+      const legend = document.createElement("legend");
+      legend.textContent = entry.alias;
+      fieldset.appendChild(legend);
+
+      // 别名（会话内识别；不收姓名/HKID/地址）
+      const aliasField = makeEl("div", "field");
+      const aliasLabel = makeEl("label", null, "会话别名");
+      const aliasInput = document.createElement("input");
+      aliasInput.type = "text";
+      aliasInput.autocomplete = "off";
+      aliasInput.value = entry.alias;
+      aliasInput.setAttribute("data-locator-template", "request-subject-" + entry.id + "-alias");
+      aliasInput.setAttribute("data-locator", "request-subject-" + entry.id + "-alias");
+      aliasInput.addEventListener("input", () => {
+        entry.alias = aliasInput.value;
+        legend.textContent = aliasInput.value || (def.legend + " " + String(seq));
+        noteEdit();
+      });
+      aliasLabel.appendChild(aliasInput);
+      aliasField.appendChild(aliasLabel);
+      fieldset.appendChild(aliasField);
+
+      // 出生日期（仅相关路径需要；不收其他身份资料）
+      const birthField = makeEl("div", "field");
+      const birthLabel = makeEl("label", null, "出生日期（YYYY-MM-DD；资格路径需要时填写）");
+      const birthInput = document.createElement("input");
+      birthInput.type = "text";
+      birthInput.placeholder = "YYYY-MM-DD";
+      birthInput.autocomplete = "off";
+      birthInput.setAttribute("data-locator-template", "request-subject-" + entry.id + "-birth-date");
+      birthInput.setAttribute("data-locator", "request-subject-" + entry.id + "-birth-date");
+      birthInput.addEventListener("input", () => { entry.birth = birthInput.value.trim(); noteEdit(); });
+      birthLabel.appendChild(birthInput);
+      birthField.appendChild(birthLabel);
+      fieldset.appendChild(birthField);
+
+      // 父母／祖父母类别选择
+      if (def.kinshipOptions) {
+        const kindField = makeEl("div", "field");
+        const kindLabel = makeEl("label", null, "关系类别");
+        const kindSel = document.createElement("select");
+        for (const pair of def.kinshipOptions) {
+          const option = document.createElement("option");
+          option.value = pair[0]; option.textContent = pair[1];
+          kindSel.appendChild(option);
+        }
+        entry.kinship = def.kinshipOptions[0][0];
+        kindSel.addEventListener("change", () => { entry.kinship = kindSel.value; noteEdit(); });
+        kindLabel.appendChild(kindSel);
+        kindField.appendChild(kindLabel);
+        fieldset.appendChild(kindField);
+      } else {
+        entry.kinship = def.kinship;
+      }
+
+      // 关系依据
+      const basisField = makeEl("div", "field");
+      const basisLabel = makeEl("label", null, "关系依据");
+      const basisSel = document.createElement("select");
+      const emptyOpt = document.createElement("option");
+      emptyOpt.value = ""; emptyOpt.textContent = "请选择";
+      basisSel.appendChild(emptyOpt);
+      for (const pair of def.bases) {
+        const option = document.createElement("option");
+        option.value = pair[0]; option.textContent = pair[1];
+        basisSel.appendChild(option);
+      }
+      basisSel.addEventListener("change", () => { entry.basis = basisSel.value; noteEdit(); });
+      basisLabel.appendChild(basisSel);
+      basisField.appendChild(basisLabel);
+      fieldset.appendChild(basisField);
+
+      // 供养／照顾人（relation actor）
+      const actorField = makeEl("div", "field");
+      const actorLabel = makeEl("label", null, "主要由谁供养／照顾");
+      const actorSel = document.createElement("select");
+      actorSel.setAttribute("data-locator-template", "y-{YA}-relation-r" + String(seq) + "-actor");
+      const optSelf = document.createElement("option");
+      optSelf.value = "p1"; optSelf.textContent = "你";
+      const optSpouse = document.createElement("option");
+      optSpouse.value = "p2"; optSpouse.textContent = "配偶";
+      actorSel.appendChild(optSelf); actorSel.appendChild(optSpouse);
+      actorSel.addEventListener("change", () => { entry.actor = actorSel.value; noteEdit(); });
+      actorLabel.appendChild(actorSel);
+      actorField.appendChild(actorLabel);
+      fieldset.appendChild(actorField);
+      entry.relSelect = actorSel;
+
+      // 资格原始事实 TF 控件
+      for (const key of def.subjectFacts) {
+        const factDef = SUBJECT_FACT_DEFS[key];
+        const ctl = buildTfControl({
+          label: factDef.label + "（" + def.legend + " " + String(seq) + "）",
+          locatorTemplate: "y-{YA}-subject-" + entry.id + "-" + factDef.short,
+        });
+        fieldset.appendChild(ctl.root);
+        entry.tfControls[key] = ctl;
+      }
+      // 关系事实 TF 控件
+      for (const key of def.relationFacts) {
+        const factDef = RELATION_FACT_DEFS[key];
+        const ctl = buildTfControl({
+          label: factDef.label + "（" + def.legend + " " + String(seq) + "）",
+          locatorTemplate: "y-{YA}-relation-r" + String(seq) + "-" + factDef.short,
+        });
+        fieldset.appendChild(ctl.root);
+        entry.tfControls["rel:" + key] = ctl;
+      }
+      // 现金供养（父母／祖父母路径；金额字符串）
+      if (def.cash) {
+        const cashField = makeEl("div", "field");
+        const cashLabel = makeEl("label", null, "本年度现金供养金额（港元；未提供请留空）");
+        const cashInput = document.createElement("input");
+        cashInput.type = "text";
+        cashInput.inputMode = "decimal";
+        cashInput.autocomplete = "off";
+        cashInput.setAttribute("data-locator-template", "y-{YA}-relation-r" + String(seq) + "-cash-maintenance");
+        cashInput.setAttribute("data-locator", "y-" + currentYear() + "-relation-r" + String(seq) + "-cash-maintenance");
+        cashInput.addEventListener("input", noteEdit);
+        cashLabel.appendChild(cashInput);
+        cashField.appendChild(cashLabel);
+        fieldset.appendChild(cashField);
+        entry.cashInput = cashInput;
+      }
+
+      // 申索意图（仅意图引用，不承载资格结论）
+      for (const pair of def.claims) {
+        const claimField = makeEl("div", "field");
+        const claimLabel = document.createElement("label");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.addEventListener("change", () => {
+          entry.claims[pair[0]] = box.checked;
+          updateVisibility();
+          noteEdit();
+        });
+        claimLabel.appendChild(box);
+        claimLabel.appendChild(document.createTextNode(" " + pair[1]));
+        claimField.appendChild(claimLabel);
+        fieldset.appendChild(claimField);
+        entry.claimBoxes.push({ kind: pair[0], box: box });
+      }
+
+      // 移除（按钮名含对象别名；004 §7）
+      const removeBtn = makeEl("button", "btn btn-secondary", "移除" + entry.alias);
+      removeBtn.type = "button";
+      removeBtn.addEventListener("click", () => {
+        const index = dependants.indexOf(entry);
+        if (index >= 0) dependants.splice(index, 1);
+        fieldset.remove();
+        updateVisibility();
+        updateGroupStates();
+        noteEdit();
+        // 焦点移至相邻条目或添加按钮（004 §7）
+        const addBtn = $id(kind === "child" ? "add-child" : kind === "parent" ? "add-parent" : "add-sibling");
+        if (addBtn) addBtn.focus();
+      });
+      fieldset.appendChild(removeBtn);
+
+      listHost.appendChild(fieldset);
+      entry.fieldset = fieldset;
+      entry.legendEl = legend;
+      updateVisibility();
+      updateGroupStates();
+      noteEdit();
+      aliasInput.focus(); // 添加后焦点移至新条目（004 §7）
+      return entry;
+    }
+    $id("add-child").addEventListener("click", () => addDependant("child"));
+    $id("add-parent").addEventListener("click", () => addDependant("parent"));
+    $id("add-sibling").addEventListener("click", () => addDependant("sibling"));
+
+    // —— 照顾付款条目（004 §3.6 care_payments：原始事实，不自动生成扣除）——
+    const careList = $id("care-list");
+    function careSubjectOptions() {
+      const options = [];
+      for (const dep of dependants) options.push({ value: dep.id, text: dep.alias || dep.id });
+      if (marriedSelect.value === "married") options.push({ value: "p2", text: personLabel("p2") });
+      return options;
+    }
+    function addCarePayment() {
+      careSeq += 1;
+      const seq = careSeq;
+      const id = "e" + String(seq);
+      const entry = { id: id };
+      carePayments.push(entry);
+      const fieldset = document.createElement("fieldset");
+      fieldset.className = "dep-entry";
+      const legend = document.createElement("legend");
+      legend.textContent = "照顾付款 " + String(seq);
+      fieldset.appendChild(legend);
+
+      function fieldText(labelText, placeholder, locatorTail) {
+        const field = makeEl("div", "field");
+        const label = makeEl("label", null, labelText);
+        const input = document.createElement("input");
+        input.type = "text";
+        if (placeholder) input.placeholder = placeholder;
+        input.autocomplete = "off";
+        input.setAttribute("data-locator-template", "y-{YA}-care-" + id + "-" + locatorTail);
+        input.setAttribute("data-locator", "y-" + currentYear() + "-care-" + id + "-" + locatorTail);
+        input.addEventListener("input", noteEdit);
+        label.appendChild(input);
+        field.appendChild(label);
+        fieldset.appendChild(field);
+        return input;
+      }
+      function fieldSelect(labelText, pairs, locatorTail) {
+        const field = makeEl("div", "field");
+        const label = makeEl("label", null, labelText);
+        const sel = document.createElement("select");
+        for (const pair of pairs) {
+          const option = document.createElement("option");
+          option.value = pair[0]; option.textContent = pair[1];
+          sel.appendChild(option);
+        }
+        if (locatorTail) {
+          sel.setAttribute("data-locator-template", "y-{YA}-care-" + id + "-" + locatorTail);
+          sel.setAttribute("data-locator", "y-" + currentYear() + "-care-" + id + "-" + locatorTail);
+        }
+        sel.addEventListener("change", noteEdit);
+        label.appendChild(sel);
+        field.appendChild(label);
+        fieldset.appendChild(field);
+        return sel;
+      }
+      entry.payer = fieldSelect("付款人", [["p1", "你"], ["p2", "配偶"]], "payer");
+      entry.subject = fieldSelect("受照顾者", careSubjectOptions(), "subject");
+      entry.paidOn = fieldText("付款日期（YYYY-MM-DD）", "YYYY-MM-DD", "paid-on");
+      entry.amount = fieldText("付款金额（港元）", null, "amount");
+      entry.from = fieldText("照顾服务开始（含，YYYY-MM-DD）", "YYYY-MM-DD", "from");
+      entry.to = fieldText("照顾服务结束（不含，YYYY-MM-DD）", "YYYY-MM-DD", "to");
+      entry.residential = fieldSelect("是否住宅照顾", [["", "请选择"], ["true", "是"], ["false", "否"], ["unknown", "不确定"]], "residential");
+      entry.paidToHome = fieldSelect("是否付予院舍／代理", [["", "请选择"], ["true", "是"], ["false", "否"], ["unknown", "不确定"]], "paid-to-home");
+      entry.homeBasis = fieldSelect("院舍类别依据", [
+        ["", "请选择"],
+        ["cap459_licence", "Cap.459 持牌院舍"],
+        ["cap459_s3_excluded", "Cap.459 s.3 豁免以外"],
+        ["cap633_scheduled_nursing_s128_exemption", "Cap.633 附表护理院 s.128 豁免"],
+        ["cap613_licence", "Cap.613 持牌"],
+        ["cap613_exemption", "Cap.613 豁免"],
+        ["other", "其他"],
+        ["unknown", "不确定"],
+      ], "home-basis");
+      const removeBtn = makeEl("button", "btn btn-secondary", "移除照顾付款 " + String(seq));
+      removeBtn.type = "button";
+      removeBtn.addEventListener("click", () => {
+        const index = carePayments.indexOf(entry);
+        if (index >= 0) carePayments.splice(index, 1);
+        fieldset.remove();
+        noteEdit();
+      });
+      fieldset.appendChild(removeBtn);
+      careList.appendChild(fieldset);
+      updateGroupStates();
+      noteEdit();
+    }
+    $id("add-care-payment").addEventListener("click", () => addCarePayment());
+
+    // —— 分组状态摘要（004 §2：已填／未申索等文字，不仅靠颜色）——
+    function updateGroupStates() {
+      const counts = { child: 0, parent: 0, sibling: 0 };
+      for (const dep of dependants) counts[dep.kind] += 1;
+      $id("children-state").textContent = counts.child ? "已填 " + counts.child + " 项" : "未申索";
+      $id("parents-state").textContent = counts.parent ? "已填 " + counts.parent + " 项" : "未申索";
+      $id("siblings-state").textContent = counts.sibling ? "已填 " + counts.sibling + " 项" : "未申索";
+      $id("self-disability-state").textContent = $id("claim-personal-disability").checked ? "已申索" : "未申索";
+      $id("single-parent-state").textContent = $id("claim-single-parent").checked ? "已申索" : "未申索";
+      $id("spouse-dda-state").textContent = $id("spouse-dda-claim").checked ? "已申索" : "未申索";
+      $id("care-state").textContent = carePayments.length ? "已填 " + carePayments.length + " 项" : "未填写";
+      // 单亲子女选择列表与受养人同步
+      const spChild = $id("single-parent-child");
+      const current = spChild.value;
+      spChild.textContent = "";
+      const empty = document.createElement("option");
+      empty.value = ""; empty.textContent = "请选择";
+      spChild.appendChild(empty);
+      for (const dep of dependants) {
+        if (dep.kind !== "child") continue;
+        const option = document.createElement("option");
+        option.value = dep.id;
+        option.textContent = dep.alias || dep.id;
+        spChild.appendChild(option);
+      }
+      if ([...spChild.options].some((o) => o.value === current)) spChild.value = current;
+    }
+
+    // —— 条件显示（004 §3.7／bounded §2：按活动消费者显示；inactive 不显示不组装）——
+    function jointCandidateActive() {
+      return marriedSelect.value === "married" && candidateJoint.checked;
+    }
+    function updateVisibility() {
+      const married = marriedSelect.value === "married";
+      const basisActual = $id("assessment-basis").value === "actual";
+      spouseDetails.hidden = !married;
+      if (married) spouseDetails.open = true;
+      candidateJoint.disabled = !married;
+      const jointOption = salarySelection.querySelector('option[value="salary_joint"]');
+      if (jointOption) jointOption.disabled = !married;
+      if (!married) {
+        candidateJoint.checked = false;
+        if (salarySelection.value === "salary_joint") salarySelection.value = "best";
+      }
+      // 004 §3.7／005 §4.6：participant 的 NAI/MPF 是 presence 事实（缺失≠0）；
+      // 配偶即使 AI=false 也须显式填 0，故金额字段不随 AI 选择隐藏；只有
+      // 活动薪俸路径（AI=true）才询问来源范围。
+      spouseIncomeBlock.hidden = !married;
+      $id("spouse-source-field").hidden = spouseSalaryAi.value !== "true";
+      const jointActive = jointCandidateActive();
+      // actual 普通婚姻夫妻的实际 salary 模式核对（salary_joint_elected/assessed）
+      // 在已婚＋actual basis 或联合候选活动时即属活动消费者（bounded §2 表）；
+      // 单身＋仅 separate 时完全不显示（004 §3.7 短路 1）。
+      const electedActive = married && (basisActual || jointActive);
+      const paBlockNeeded = jointActive || spouseSalaryAi.value === "false" || $id("self-salary-ai").value === "false";
+      assessmentExtras.hidden = !(electedActive || paBlockNeeded);
+      $id("actual-joint-elected").closest(".field").hidden = !electedActive;
+      $id("actual-joint-assessed").closest(".field").hidden = !electedActive;
+      $id("actual-history").closest(".field").hidden = !jointActive;
+      // PA mode 控件：s.29 分支 A／转换消费者（一方无薪俸收入或联合候选活动）
+      $id("pa-mode-block").hidden = !paBlockNeeded;
+      $id("spouse-pa-mode-field").hidden = !(spouseSalaryAi.value === "false" || jointActive);
+      $id("self-pa-mode-field").hidden = !($id("self-salary-ai").value === "false" || jointActive);
+      const spouseMode = $id("spouse-pa-mode").value;
+      const selfMode = $id("self-pa-mode").value;
+      $id("spouse-pa-date-field").hidden = !(spouseMode === "individual" || spouseMode === "joint");
+      $id("self-pa-date-field").hidden = !(selfMode === "individual" || selfMode === "joint");
+      // 提名控件：actual/hypothetical 完全分开（004 §3.6；s.10(a) 派生、s.10(b) 显式）
+      $id("nom-actual-group").hidden = !(jointActive && basisActual);
+      $id("nom-hypo-group").hidden = !(jointActive && !basisActual);
+      $id("nom-actual-person-field").hidden = $id("nom-actual-status").value !== "named";
+      $id("nom-hypo-person-field").hidden = $id("nom-hypo-status").value !== "named";
+      // 子女整组提名：仅已婚且有子女相关申索（child-DDA 亦触发；spouse DDA 不触发）
+      const childClaimed = dependants.some((dep) =>
+        dep.kind === "child" && (dep.claims["child"] || dep.claims["disabled_dependant"])
+      );
+      $id("child-nomination-group").hidden = !(married && childClaimed);
+      $id("child-nomination-person-field").hidden = $id("child-nomination-status").value !== "agreed";
+      // 照顾付款分组：有相关受养人或配偶 DDA 路径时显示
+      $id("care-details").hidden = !(dependants.length > 0 || $id("spouse-dda-claim").checked);
+      $id("single-parent-child-field").hidden = !$id("claim-single-parent").checked;
+      updateGroupStates();
+    }
+    for (const el of [
+      marriedSelect, spouseSalaryAi, $id("self-salary-ai"), candidateJoint,
+      $id("assessment-basis"), $id("nom-actual-status"), $id("nom-hypo-status"),
+      $id("child-nomination-status"), $id("spouse-dda-claim"),
+      $id("claim-personal-disability"), $id("claim-single-parent"),
+      $id("self-pa-mode"), $id("spouse-pa-mode"), $id("spouse-alias"),
+    ]) {
+      el.addEventListener("change", () => { updateVisibility(); });
+    }
+    $id("spouse-alias").addEventListener("input", () => { refreshMarriageSpouseSelects(); });
+
+    // =====================================================================
+    // v2 collector（薪俸 schema 2.0.0；缺失≠否/零；inactive 字段不组装）
+    // =====================================================================
+    function readTriSelect(id) {
+      const v = $id(id).value;
+      if (v === "") return null;
+      return v === "true" ? true : v === "false" ? false : "unknown";
+    }
+    function collectFinanceSelf() {
+      const finance = { properties: [], businesses: [], deduction_items: [] };
+      const nai = $id("employment-income").value.trim();
+      if (nai) finance.employment_income_nai = nai;
+      const mpf = $id("mpf-contributions").value.trim();
+      if (mpf) finance.mpf_mandatory_contributions = mpf;
+      const ai = readTriSelect("self-salary-ai");
+      if (ai !== null) finance.has_assessable_salary_income = ai;
+      const source = $id("self-salary-source").value;
+      if (source) finance.source_classification = { salary: source };
+      return finance;
+    }
+    function collectFinanceSpouse() {
+      const finance = { properties: [], businesses: [], deduction_items: [] };
+      const ai = readTriSelect("spouse-salary-ai");
+      if (ai !== null) finance.has_assessable_salary_income = ai;
+      // NAI/MPF 是 presence 事实：AI=false 时仍须显式提交 0（缺失≠零，
+      // 005 §4.6）；只按已填值组装，绝不由 AI 选择补默认零。
+      const nai = $id("spouse-nai").value.trim();
+      if (nai) finance.employment_income_nai = nai;
+      const mpf = $id("spouse-mpf").value.trim();
+      if (mpf) finance.mpf_mandatory_contributions = mpf;
+      // 来源范围只属于活动薪俸路径（AI=true）；inactive 时不组装。
+      if (spouseSalaryAi.value === "true") {
+        const source = $id("spouse-salary-source").value;
+        if (source) finance.source_classification = { salary: source };
+      }
+      return finance;
+    }
+    function collectAssessment() {
+      const married = marriedSelect.value === "married";
+      const basisActual = $id("assessment-basis").value === "actual";
+      const candidates = [];
+      if (candidateSeparate.checked) candidates.push("salary_separate");
+      if (married && candidateJoint.checked) candidates.push("salary_joint");
+      const assessment = {
+        basis: $id("assessment-basis").value,
+        candidates: candidates,
+        selection: salarySelection.value,
+      };
+      const jointActive = married && candidateJoint.checked;
+      const electedActive = married && (basisActual || jointActive);
+      // actual 对象逐成员按「控件显示（＝活动消费者）且已填」组装；
+      // 缺席/不提交保持缺席（不写 none/ordinary；005 §4.10）
+      const actual = {};
+      if (electedActive) {
+        const elected = readTriSelect("actual-joint-elected");
+        if (elected !== null) actual.salary_joint_elected = elected;
+        const assessed = readTriSelect("actual-joint-assessed");
+        if (assessed !== null) actual.salary_joint_assessed = assessed;
+      }
+      if (jointActive) {
+        const history = $id("actual-history").value;
+        if (history) actual.history = history;
+      }
+      const pa = {};
+      const selfMode = $id("self-pa-mode").value;
+      if (!$id("self-pa-mode-field").hidden && selfMode) {
+        pa.p1 = { mode: selfMode };
+        const selfDate = $id("self-pa-date").value.trim();
+        if (selfDate && !$id("self-pa-date-field").hidden) pa.p1.date = selfDate;
+      }
+      const spouseMode = $id("spouse-pa-mode").value;
+      if (!$id("spouse-pa-mode-field").hidden && spouseMode) {
+        pa.p2 = { mode: spouseMode };
+        const spouseDate = $id("spouse-pa-date").value.trim();
+        if (spouseDate && !$id("spouse-pa-date-field").hidden) pa.p2.date = spouseDate;
+      }
+      if (Object.keys(pa).length) actual.pa = pa;
+      if (jointActive && basisActual) {
+        const status = $id("nom-actual-status").value;
+        actual.salary_joint_nomination = {
+          status: status,
+          person_id: status === "named" ? ($id("nom-actual-person").value || null) : null,
+        };
+      }
+      if (Object.keys(actual).length) assessment.actual = actual;
+      if (jointActive && !basisActual) {
+        const status = $id("nom-hypo-status").value;
+        assessment.hypothetical_salary_joint_nomination = {
+          status: status,
+          person_id: status === "named" ? ($id("nom-hypo-person").value || null) : null,
+        };
+      }
+      return assessment;
+    }
+    function collectChildNomination() {
+      if ($id("child-nomination-group").hidden) {
+        return { person_id: null, status: "none" };
+      }
+      const status = $id("child-nomination-status").value;
+      return {
+        status: status,
+        person_id: status === "agreed" ? ($id("child-nomination-person").value || null) : null,
+      };
+    }
+    function collectMarriage() {
+      const status = marriedSelect.value;
+      const win = yearWindow(currentYear());
+      if (status === "single") {
+        return [{ from: win.from, to: win.to, value: "unmarried" }];
+      }
+      if (status === "unknown") {
+        return [{ from: win.from, to: win.to, value: "unknown" }];
+      }
+      return readMarriagePeriods();
+    }
+    function collectSubjectFacts() {
+      const facts = {};
+      const selfIncapacity = readTriSelect("self-incapacity");
+      if (selfIncapacity !== null) {
+        const win = yearWindow(currentYear());
+        facts.p1 = { incapacitated_for_work: [{ from: win.from, to: win.to, value: selfIncapacity }] };
+      }
+      if (marriedSelect.value === "married") {
+        const spouseDaa = readTriSelect("spouse-daa");
+        if (spouseDaa !== null) {
+          const win = yearWindow(currentYear());
+          facts.p2 = { govt_disability_allowance: [{ from: win.from, to: win.to, value: spouseDaa }] };
+        }
+      }
+      for (const dep of dependants) {
+        const def = DEP_KIND_DEFS[dep.kind];
+        const entryFacts = {};
+        for (const key of def.subjectFacts) {
+          const ctl = dep.tfControls[key];
+          if (!ctl) continue;
+          const periods = ctl.read();
+          if (periods !== null) entryFacts[SUBJECT_FACT_DEFS[key].wire] = periods;
+        }
+        if (Object.keys(entryFacts).length) facts[dep.id] = entryFacts;
+      }
+      return facts;
+    }
+    function collectRelations() {
+      const relations = [];
+      let relSeq = 0;
+      for (const dep of dependants) {
+        relSeq += 1;
+        const def = DEP_KIND_DEFS[dep.kind];
+        const relation = {
+          relation_id: "r" + String(relSeq),
+          actor_id: dep.actor,
+          subject_id: dep.id,
+        };
+        const kinship = { kind: dep.kinship, basis: dep.basis || "unknown" };
+        const win = yearWindow(currentYear());
+        kinship.during = [{ from: win.from, to: win.to, value: true }];
+        relation.kinship = kinship;
+        for (const key of def.relationFacts) {
+          const ctl = dep.tfControls["rel:" + key];
+          if (!ctl) continue;
+          const periods = ctl.read();
+          if (periods !== null) relation[RELATION_FACT_DEFS[key].wire] = periods;
+        }
+        if (dep.cashInput && dep.cashInput.value.trim()) {
+          relation.cash_maintenance = dep.cashInput.value.trim();
+        }
+        relations.push(relation);
+      }
+      return relations;
+    }
+    function collectClaims() {
+      const claims = [];
+      let claimSeq = 0;
+      for (const dep of dependants) {
+        const def = DEP_KIND_DEFS[dep.kind];
+        for (const pair of def.claims) {
+          if (!dep.claims[pair[0]]) continue;
+          claimSeq += 1;
+          const kind = pair[0] === "__kind__" ? dep.kinship : pair[0];
+          claims.push({
+            claim_id: "c" + String(claimSeq),
+            kind: kind,
+            claimant_id: dep.actor,
+            subject_id: dep.id,
+          });
+        }
+      }
+      if ($id("claim-personal-disability").checked) {
+        claimSeq += 1;
+        claims.push({ claim_id: "c" + String(claimSeq), kind: "personal_disability", claimant_id: "p1", subject_id: "p1" });
+      }
+      if ($id("claim-single-parent").checked) {
+        const childId = $id("single-parent-child").value;
+        if (childId) {
+          claimSeq += 1;
+          claims.push({ claim_id: "c" + String(claimSeq), kind: "single_parent", claimant_id: "p1", subject_id: childId });
+        }
+      }
+      if (marriedSelect.value === "married" && $id("spouse-dda-claim").checked) {
+        claimSeq += 1;
+        claims.push({ claim_id: "c" + String(claimSeq), kind: "disabled_dependant", claimant_id: "p1", subject_id: "p2" });
+      }
+      return claims;
+    }
+    function collectCarePayments() {
+      const payments = [];
+      for (const entry of carePayments) {
+        payments.push({
+          payment_id: entry.id,
+          payer_id: entry.payer.value,
+          subject_id: entry.subject.value,
+          paid_on: entry.paidOn.value.trim(),
+          amount: entry.amount.value.trim(),
+          care_from: entry.from.value.trim(),
+          care_to: entry.to.value.trim(),
+          residential_care_received: entry.residential.value === "" ? "unknown" : entry.residential.value === "true" ? true : entry.residential.value === "false" ? false : "unknown",
+          paid_to_home_or_agent: entry.paidToHome.value === "" ? "unknown" : entry.paidToHome.value === "true" ? true : entry.paidToHome.value === "false" ? false : "unknown",
+          home_basis: entry.homeBasis.value || "unknown",
+          home_status_in_force: [],
+        });
+      }
+      return payments;
+    }
+
+    function collectInput() {
+      const year = currentYear();
+      const married = marriedSelect.value === "married";
+      const subjects = [{ subject_id: "p1" }];
+      if (married) subjects.push({ subject_id: "p2" });
+      for (const dep of dependants) {
+        const subject = { subject_id: dep.id };
+        if (dep.birth) subject.birth_date = dep.birth;
+        subjects.push(subject);
+      }
+      for (const hist of historicalSubjects) subjects.push({ subject_id: hist.id });
+      const participants = [{ person_id: "p1", role: "self" }];
+      if (married) participants.push({ person_id: "p2", role: "spouse" });
+      const financials = { p1: collectFinanceSelf() };
+      if (married) financials.p2 = collectFinanceSpouse();
+      const yearBlock = {
+        participants: participants,
+        subject_facts: collectSubjectFacts(),
+        household: {
+          marriage: collectMarriage(),
+          living_apart: married ? readLivingApart() : [],
+          child_nomination: collectChildNomination(),
+        },
+        relations: collectRelations(),
+        financials: financials,
+        care_payments: collectCarePayments(),
+        claims: collectClaims(),
+        assessment: collectAssessment(),
+        manual_issues: [],
+      };
+      const paid = $id("provisional-paid").value.trim();
+      if (paid) yearBlock.provisional_paid = paid;
+      return {
+        year_of_assessment: year,
+        subjects: subjects,
+        years: (() => { const obj = {}; obj[year] = yearBlock; return obj; })(),
+        hk_presence_days: [],
+        assumptions: [],
+      };
+    }
+
+    // 客户端形态校验（服务端校验仍是权威；004 §4 错误摘要＋定位）
+    function validateCollected(input) {
+      const errors = [];
+      const year = input.year_of_assessment;
+      const win = yearWindow(year);
+      function checkPeriods(periods, locatorTail, label) {
+        periods.forEach((period, index) => {
+          const target = { locator: "y-" + year + "-" + locatorTail };
+          if (!isIsoDate(period.from) || !isIsoDate(period.to)) {
+            errors.push({ target: target, message: label + "：第 " + (index + 1) + " 段日期须为有效 YYYY-MM-DD。" });
+          } else if (period.from >= period.to) {
+            errors.push({ target: target, message: label + "：第 " + (index + 1) + " 段须满足开始早于结束（左闭右开）。" });
+          } else if (period.from < win.from || period.to > win.to) {
+            errors.push({ target: target, message: label + "：第 " + (index + 1) + " 段越出本课税年度窗口（" + win.from + " 至 " + win.to + "）。" });
+          }
+        });
+      }
+      const finance = input.years[year].financials.p1;
+      if (!finance.employment_income_nai) {
+        errors.push({ target: { id: "employment-income" }, message: "应课税收入未填写；请输入数字，不要留空。" });
+      } else if (!isAmount(finance.employment_income_nai)) {
+        errors.push({ target: { id: "employment-income" }, message: "应课税收入语法非法：请输入规范金额（数字，可含小数；无千位逗号；不以 0 开头）。" });
+      }
+      if (finance.mpf_mandatory_contributions && !isAmount(finance.mpf_mandatory_contributions)) {
+        errors.push({ target: { id: "mpf-contributions" }, message: "MPF 强制性供款语法非法：请输入规范金额，或留空表示未提供。" });
+      }
+      if (input.years[year].provisional_paid && !isAmount(input.years[year].provisional_paid)) {
+        errors.push({ target: { id: "provisional-paid" }, message: "已缴暂缴税语法非法：请输入规范金额，或留空表示未提供。" });
+      }
+      if (marriedSelect.value === "married") {
+        const spouseFinance = input.years[year].financials.p2;
+        if (spouseSalaryAi.value === "") {
+          errors.push({ target: { id: "spouse-salary-ai" }, message: "请确认配偶本年度是否有薪俸收入（三态选择，不默认）。" });
+        }
+        if (!(spouseFinance.employment_income_nai && isAmount(spouseFinance.employment_income_nai))) {
+          errors.push({ target: { id: "spouse-nai" }, message: "配偶薪俸净入息未填写或语法非法（规范金额；无薪俸收入请显式填 0，缺失≠零）。" });
+        }
+        if (!(spouseFinance.mpf_mandatory_contributions && isAmount(spouseFinance.mpf_mandatory_contributions))) {
+          errors.push({ target: { id: "spouse-mpf" }, message: "配偶 MPF 强制性供款未填写或语法非法（无供款请显式填 0，缺失≠零）。" });
+        }
+        checkPeriods(input.years[year].household.marriage, "marriage", "婚姻期间");
+        checkPeriods(input.years[year].household.living_apart, "living-apart", "分居说明期间");
+        const nomination = input.years[year].assessment.actual && input.years[year].assessment.actual.salary_joint_nomination;
+        if (nomination && nomination.status === "named" && !nomination.person_id) {
+          errors.push({ target: { id: "nom-actual-person" }, message: "已指定实际提名时请选择被提名人（本年度参与人）。" });
+        }
+        const hypoNom = input.years[year].assessment.hypothetical_salary_joint_nomination;
+        if (hypoNom && hypoNom.status === "named" && !hypoNom.person_id) {
+          errors.push({ target: { id: "nom-hypo-person" }, message: "已指定假设提名时请选择被提名人（本年度参与人）。" });
+        }
+      }
+      const childNom = input.years[year].household.child_nomination;
+      if (childNom.status === "agreed" && !childNom.person_id) {
+        errors.push({ target: { id: "child-nomination-person" }, message: "已商定整组提名时请选择提名方。" });
+      }
+      if (!input.years[year].assessment.candidates.length) {
+        errors.push({ target: { locator: "y-" + year + "-salary-candidates" }, message: "请至少选择一种参与比较的薪俸候选。" });
+      }
+      for (const dep of dependants) {
+        if (dep.birth && !isIsoDate(dep.birth)) {
+          errors.push({ target: { locator: "request-subject-" + dep.id + "-birth-date" }, message: dep.alias + "：出生日期须为有效 YYYY-MM-DD。" });
+        }
+        if (dep.cashInput && dep.cashInput.value.trim() && !isAmount(dep.cashInput.value.trim())) {
+          errors.push({ target: { locator: "y-" + year + "-relation-" + dep.id.replace("d", "r") + "-cash-maintenance" }, message: dep.alias + "：现金供养金额语法非法。" });
+        }
+      }
+      for (const payment of input.years[year].care_payments) {
+        if (!isIsoDate(payment.paid_on)) {
+          errors.push({ target: { locator: "y-" + year + "-care-" + payment.payment_id + "-paid-on" }, message: "照顾付款 " + payment.payment_id + "：付款日期须为有效 YYYY-MM-DD。" });
+        }
+        if (!isAmount(payment.amount)) {
+          errors.push({ target: { locator: "y-" + year + "-care-" + payment.payment_id + "-amount" }, message: "照顾付款 " + payment.payment_id + "：金额须为规范金额。" });
+        }
+      }
+      return errors;
+    }
+
+    // —— 确认摘要（弹窗内容；本地生成，未经确认的事实不当作结论）——
+    function buildSummary(input) {
+      const year = input.year_of_assessment;
+      const married = marriedSelect.value === "married";
+      const finance = input.years[year].financials.p1;
+      const summary = [
+        ["税项", "薪俸税"],
+        ["课税年度", yearText(year)],
+        ["你的薪俸净入息（NAI）", (finance.employment_income_nai || "未填写") + (finance.employment_income_nai ? " 港元" : "")],
+        ["你的 MPF 强制性供款", (finance.mpf_mandatory_contributions || "未提供") + (finance.mpf_mandatory_contributions ? " 港元" : "")],
+        ["婚姻状况", marriedSelect.options[marriedSelect.selectedIndex].textContent],
+      ];
+      if (married) {
+        const spouseFinance = input.years[year].financials.p2;
+        summary.push(["配偶薪俸收入", spouseSalaryAi.value === "true"
+          ? ((spouseFinance.employment_income_nai || "未填写") + " 港元")
+          : spouseSalaryAi.options[spouseSalaryAi.selectedIndex].textContent]);
+      }
+      if (dependants.length) {
+        summary.push(["受养人条目", dependants.map((d) => d.alias).join("、")]);
+      }
+      const claims = input.years[year].claims;
+      summary.push(["申索意图", claims.length ? claims.length + " 项（最终以服务器校验为准）" : "未申索"]);
+      summary.push(["评税方式", input.years[year].assessment.candidates.join("／") + "（采用：" + input.years[year].assessment.selection + "）"]);
+      if (input.years[year].provisional_paid) {
+        summary.push(["已缴暂缴税", input.years[year].provisional_paid + " 港元"]);
+      }
+      summary.push(["规则版本", "当前已发布规则快照"]);
+      return summary;
+    }
+
+    // =====================================================================
+    // 错误摘要与 questions 定位（004 §4：展开折叠组再聚焦；封闭定位信息）
+    // =====================================================================
+    function clearErrors() {
+      errorSummary.hidden = true;
+      errorList.textContent = "";
+    }
+    function showError(entries) {
+      errorList.textContent = "";
+      for (const item of entries) {
+        const li = document.createElement("li");
+        const link = document.createElement("a");
+        link.href = "#";
+        link.textContent = item.message;
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          focusTarget(item.target);
+        });
+        li.appendChild(link);
+        errorList.appendChild(li);
+      }
+      errorCount.textContent = String(entries.length);
+      errorSummary.hidden = false;
+      errorSummary.focus();
+    }
+    function focusTarget(target) {
+      if (!target) {
+        statusRegion.focus && statusRegion.focus();
+        return;
+      }
+      let el = null;
+      if (target.id) el = document.getElementById(target.id);
+      if (!el && target.locator) {
+        el = document.querySelector('[data-locator="' + target.locator + '"]');
+      }
+      if (!el) return;
+      // 跨折叠组定位：先展开再聚焦（004 §7）
+      let node = el;
+      while (node) {
+        if (node.tagName === "DETAILS") node.open = true;
+        node = node.parentElement;
+      }
+      const focusable = el.matches("input,select,textarea,button") ? el : el.querySelector("input,select,textarea,button");
+      (focusable || el).focus();
+    }
+    // 004 §3.6/§4：封闭 field/year/claim_id/subject_id 定位 → data-locator
+    const FIELD_LOCATOR_MAP = [
+      [/^years\.[^.]+\.household\.marriage$/, (year) => "y-" + year + "-marriage"],
+      [/^years\.[^.]+\.household\.living_apart$/, (year) => "y-" + year + "-living-apart"],
+      [/^years\.[^.]+\.household\.child_nomination$/, (year) => "y-" + year + "-child-nomination"],
+      [/^years\.[^.]+\.assessment\.basis$/, (year) => "y-" + year + "-assessment-basis"],
+      [/^years\.[^.]+\.assessment\.candidates$/, (year) => "y-" + year + "-salary-candidates"],
+      [/^years\.[^.]+\.assessment\.selection$/, (year) => "y-" + year + "-salary-selection"],
+      [/^years\.[^.]+\.assessment\.actual\.salary_joint_elected$/, (year) => "y-" + year + "-assessment-actual-salary-joint-elected"],
+      [/^years\.[^.]+\.assessment\.actual\.salary_joint_assessed$/, (year) => "y-" + year + "-assessment-actual-salary-joint-assessed"],
+      [/^years\.[^.]+\.assessment\.actual\.history$/, (year) => "y-" + year + "-assessment-actual-history"],
+      [/^years\.[^.]+\.assessment\.actual\.salary_joint_nomination/, (year) => "y-" + year + "-assessment-actual-salary-joint-nomination-status"],
+      [/^years\.[^.]+\.assessment\.hypothetical_salary_joint_nomination/, (year) => "y-" + year + "-assessment-hypothetical-salary-joint-nomination-status"],
+      [/^years\.[^.]+\.assessment\.actual\.pa\.([a-z0-9-]+)(\.mode)?$/, (year, m, subject) => "y-" + year + "-assessment-actual-pa-" + (subject || m[1]) + "-mode"],
+      [/^years\.[^.]+\.assessment\.actual\.pa\.([a-z0-9-]+)\.date$/, (year, m, subject) => "y-" + year + "-assessment-actual-pa-" + (subject || m[1]) + "-date"],
+      [/^years\.[^.]+\.financials\.([a-z0-9-]+)\.employment_income_nai$/, (year, m) => "y-" + year + "-person-" + m[1] + "-nai"],
+      [/^years\.[^.]+\.financials\.([a-z0-9-]+)\.mpf_mandatory_contributions$/, (year, m) => "y-" + year + "-person-" + m[1] + "-mpf"],
+      [/^years\.[^.]+\.financials\.([a-z0-9-]+)\.has_assessable_salary_income$/, (year, m) => "y-" + year + "-person-" + m[1] + "-salary-ai"],
+      [/^years\.[^.]+\.subject_facts\.([a-z0-9-]+)\.unmarried/, (year, m) => "y-" + year + "-subject-" + m[1] + "-unmarried"],
+      [/^years\.[^.]+\.subject_facts\.([a-z0-9-]+)\.full_time_education/, (year, m) => "y-" + year + "-subject-" + m[1] + "-education"],
+      [/^years\.[^.]+\.subject_facts\.([a-z0-9-]+)\.incapacitated_for_work/, (year, m) => "y-" + year + "-subject-" + m[1] + "-incapacity"],
+      [/^years\.[^.]+\.subject_facts\.([a-z0-9-]+)\.ordinarily_resident_hk/, (year, m) => "y-" + year + "-subject-" + m[1] + "-hk-residence"],
+      [/^years\.[^.]+\.subject_facts\.([a-z0-9-]+)\.govt_disability_allowance/, (year, m) => "y-" + year + "-subject-" + m[1] + "-daa"],
+      [/^years\.[^.]+\.provisional_paid$/, (year) => "y-" + year + "-provisional-paid"],
+      [/^year_of_assessment$/, () => null],
+    ];
+    function questionTarget(question) {
+      if (!question || typeof question !== "object") return null;
+      const field = typeof question.field === "string" ? question.field : "";
+      const year = typeof question.year === "string" ? question.year : currentYear();
+      const subject = typeof question.subject_id === "string" ? question.subject_id : null;
+      for (const pair of FIELD_LOCATOR_MAP) {
+        const match = pair[0].exec(field);
+        if (match) {
+          const locator = pair[1](year, match, subject);
+          if (locator) return { locator: locator };
+        }
+      }
+      if (field === "year_of_assessment") return { id: "assessment-year" };
+      return null; // 映射不到：可访问通用错误（004 §4）
+    }
+    function showQuestions(payload) {
+      const questions = Array.isArray(payload.questions) ? payload.questions : [];
+      const code = (payload.error && payload.error.code) || "";
+      const entries = questions.map((question) => ({
+        target: questionTarget(question),
+        message: (question && question.question_zh) || "还需要确认这项资料，系统不会把未知当作「否」或「零」。",
+      }));
+      if (!entries.length) {
+        const message = (payload.error && payload.error.message_zh) || "提交未能通过校验。";
+        entries.push({ target: null, message: message });
+      }
+      showError(entries);
+      statusRegion.textContent = "需要补充资料：请按上方摘要逐项确认后重新按「确认资料并计算」（未知不会当作否或零"
+        + (code ? "；" + code : "") + "）。";
+      statusSummary.textContent = "需要补充资料：还有 " + String(entries.length) + " 项资料需要确认。";
+      updateResultBadge("needs_input");
+    }
+
+    // =====================================================================
+    // 结果渲染（§5/§12.4：四态徽标；null≠0；条件式比较单列；不由前端重算）
+    // =====================================================================
+    const STATUS_BADGES = {
+      complete: ["估算完成", "badge-complete"],
+      partial: ["部分结果", "badge-partial"],
+      needs_input: ["需要补充资料", "badge-needs-input"],
+      blocked: ["暂不可计算", "badge-blocked"],
+    };
+    const AMOUNT_LABELS = [
+      ["before_reduction", "宽减前税款"],
+      ["reduction", "年度宽减"],
+      ["final_after_reduction", "最终税款"],
+      ["provisional_paid", "已缴暂缴税"],
+      ["next_provisional", "下年度暂缴税"],
+      ["balance", "结欠／退税（正＝欠款，负＝估算退税）"],
+    ];
+    const CANDIDATE_TEXT = { salary_separate: "分别评税", salary_joint: "联合评税" };
+    function updateResultBadge(status) {
+      const badge = STATUS_BADGES[status] || [status || "未知状态", ""];
+      resultBadge.className = "badge" + (badge[1] ? " " + badge[1] : "");
+      resultBadge.textContent = badge[0];
+    }
+    function renderAmountsInto(host, amounts) {
+      host.textContent = "";
+      const source = amounts || {};
+      for (const pair of AMOUNT_LABELS) {
+        const dt = makeEl("dt", null, pair[1]);
+        const dd = makeEl("dd");
+        dd.textContent = source[pair[0]] == null ? "未能估算" : source[pair[0]] + " 港元";
+        host.appendChild(dt);
+        host.appendChild(dd);
+      }
+    }
+    function renderStepsInto(host, steps) {
+      host.textContent = "";
+      const list = Array.isArray(steps) ? steps : [];
+      if (!list.length) return;
+      const heading = makeEl("h3", null, "计算步骤");
+      host.appendChild(heading);
+      const ol = document.createElement("ol");
+      for (const step of list) {
+        const li = document.createElement("li");
+        li.textContent = (step && step.label) || "计算步骤";
+        // 005 §14：未接纳候选的条件式金额只作非权威检查记录展示
+        const detail = (step && step.detail) || {};
+        if (step && step.kind === "selection" && Array.isArray(detail.candidate_checks)) {
+          const sub = document.createElement("ul");
+          for (const check of detail.candidate_checks) {
+            if (!check || typeof check !== "object") continue;
+            if (check.conditional_final != null && check.admission !== "eligible") {
+              const item = document.createElement("li");
+              const name = CANDIDATE_TEXT[check.candidate_id] || String(check.candidate_id || "候选");
+              item.textContent = name + "：条件式比较，非已接纳税额（条件式金额 "
+                + String(check.conditional_final) + " 港元；未获接纳，不是可缴税额）";
+              sub.appendChild(item);
+            } else if (check.admission === "unresolved") {
+              const item = document.createElement("li");
+              const name = CANDIDATE_TEXT[check.candidate_id] || String(check.candidate_id || "候选");
+              item.textContent = name + "：尚待确定（未宣告不合资格）";
+              sub.appendChild(item);
+            }
+          }
+          if (sub.childElementCount) li.appendChild(sub);
+        }
+        ol.appendChild(li);
+      }
+      host.appendChild(ol);
+    }
+    function renderResult(payload, gen) {
+      resultSection.hidden = false;
+      resultStaleNote.hidden = true;
+      resultSection.removeAttribute("data-stale");
+      editor.currentResultGen = gen;
+      updateResultBadge(payload.status);
+      renderAmountsInto(resultAmounts, payload.amounts);
+      // 候选比较说明（best=null 明示；条件式金额不进当前税额）
+      resultCandidates.textContent = "";
+      const steps = Array.isArray(payload.steps) ? payload.steps : [];
+      const selectionStep = steps.find((step) => step && step.kind === "selection");
+      if (selectionStep && selectionStep.detail && selectionStep.detail.best === null) {
+        const note = makeEl("p", "hint",
+          "未能确定哪种方式较低（存在尚未确定的候选）；已独立确定的候选结果仍按服务器结果显示。");
+        resultCandidates.appendChild(note);
+      }
+      const missing = Array.isArray(payload.missing_components) ? payload.missing_components : [];
+      if (missing.length) {
+        const note = makeEl("p", "hint", "部分结果：最终税可按已确认资料计算；"
+          + (missing.indexOf("next_provisional") >= 0 ? "下一年度暂缴税未能估算，因为该年度规则或资料尚未齐备。" : "部分组件未能估算。"));
+        resultCandidates.appendChild(note);
+      }
+      renderStepsInto(resultSteps, steps);
+      clearErrors();
+      const badge = STATUS_BADGES[payload.status] || [payload.status || "", ""];
+      statusRegion.textContent = "计算完成（" + badge[0] + "）。结果仅为估算，不是税务局评税或专业意见。";
+      statusSummary.textContent = "计算完成（" + badge[0] + "）。";
+      resultSection.scrollIntoView({ block: "nearest" });
+    }
+
+    // =====================================================================
+    // 记录区（§12.6：内存查看／附件下载／打印／原包重放；历史标示）
+    // =====================================================================
+    function addRecordFromPayload(payload, historical) {
+      if (!payload || !payload.record_id) return;
+      const existing = editor.records.find((r) => r.record_id === payload.record_id);
+      if (existing) {
+        existing.payload = payload;
+        existing.historical = existing.historical && historical;
+      } else {
+        editor.records.push({ record_id: payload.record_id, payload: payload, historical: historical });
+      }
+      renderRecords();
+    }
+    function renderRecords() {
+      recordsList.textContent = "";
+      if (!editor.records.length) return;
+      const heading = makeEl("h3", null, "本次会话记录（内存）");
+      recordsList.appendChild(heading);
+      for (const record of editor.records) {
+        const card = makeEl("div", "record-card");
+        const title = makeEl("p");
+        const badge = makeEl("span", "badge " + (record.historical ? "badge-historical" : "badge-complete"),
+          record.historical ? "历史记录" : "本次结果");
+        title.appendChild(badge);
+        title.appendChild(document.createTextNode(" " + record.record_id
+          + "（" + yearText((record.payload.binding && record.payload.period) || currentYear()) + "）"));
+        card.appendChild(title);
+        const actions = makeEl("div", "record-actions");
+        const viewBtn = makeEl("button", "btn btn-secondary", "查看 " + record.record_id);
+        viewBtn.type = "button";
+        const downloadLink = makeEl("a", "btn btn-secondary", "下载 " + record.record_id);
+        downloadLink.href = "/api/v1/records/" + encodeURIComponent(record.record_id) + "/download";
+        const printBtn = makeEl("button", "btn btn-secondary", "打印 " + record.record_id);
+        printBtn.type = "button";
+        const replayBtn = makeEl("button", "btn btn-secondary", "原包重放 " + record.record_id);
+        replayBtn.type = "button";
+        actions.appendChild(viewBtn);
+        actions.appendChild(downloadLink);
+        actions.appendChild(printBtn);
+        actions.appendChild(replayBtn);
+        card.appendChild(actions);
+        const detail = makeEl("div", "record-detail");
+        detail.hidden = true;
+        card.appendChild(detail);
+        viewBtn.addEventListener("click", () => {
+          detail.hidden = !detail.hidden;
+          if (!detail.hidden) {
+            detail.textContent = "";
+            const amounts = document.createElement("dl");
+            renderAmountsInto(amounts, (record.payload && record.payload.amounts) || {});
+            detail.appendChild(amounts);
+            // renderStepsInto 会清空宿主：步骤写入独立容器，保留金额分项。
+            const stepsHost = document.createElement("div");
+            renderStepsInto(stepsHost, (record.payload && record.payload.steps) || []);
+            detail.appendChild(stepsHost);
+          }
+        });
+        printBtn.addEventListener("click", async () => {
+          try {
+            const response = await httpJson("POST", "/api/v1/report/print", { record_id: record.record_id });
+            if (!response.ok) {
+              statusRegion.textContent = "打印报告生成失败（HTTP " + response.status + "）。";
+              return;
+            }
+            const html = await response.text();
+            const win = window.open("", "_blank");
+            if (win) {
+              win.document.open();
+              win.document.write(html);
+              win.document.close();
+            }
+          } catch (err) {
+            statusRegion.textContent = "打印报告生成失败（网络异常）。";
+          }
+        });
+        replayBtn.addEventListener("click", async () => {
+          try {
+            const response = await httpJson("POST", "/api/v1/records/replay", { record_id: record.record_id });
+            detail.hidden = false;
+            detail.textContent = "";
+            if (!response.ok) {
+              const err = await readError(response);
+              detail.appendChild(makeEl("p", null, "重放不可用：" + (err.message_zh || ("HTTP " + response.status))));
+              return;
+            }
+            const replay = await response.json();
+            detail.appendChild(makeEl("p", null, replay.notice || "历史估算，非当前重新评估"));
+            const amounts = document.createElement("dl");
+            renderAmountsInto(amounts, replay.amounts || {});
+            detail.appendChild(amounts);
+          } catch (err) {
+            statusRegion.textContent = "重放失败（网络异常）。";
+          }
+        });
+        recordsList.appendChild(card);
+      }
+    }
+
+    // =====================================================================
+    // 覆盖面板（004 §3.9／005 §17：本地说明，非模型回答；不进 chatHistory、不外发）
+    // =====================================================================
+    const coverageToggle = $id("chat-local-coverage-toggle");
+    const coveragePanel = $id("chat-local-coverage-panel");
+    let coverageRendered = false;
+    function renderCoveragePanel() {
+      if (coverageRendered) return;
+      coverageRendered = true;
+      let view = null;
+      try {
+        view = JSON.parse($id("chat-local-coverage-data").textContent);
+      } catch (err) {
+        view = null;
+      }
+      coveragePanel.textContent = "";
+      const title = makeEl("h3", null, "系统支持范围（本地说明，非模型回答）");
+      coveragePanel.appendChild(title);
+      const note = makeEl("p", "hint",
+        ((view && view.guidance && view.guidance.note_zh) || "服务器支持范围说明（本地说明，非模型回答）。")
+        + "模型未配置或离线时本说明仍可用。");
+      coveragePanel.appendChild(note);
+      const items = (view && view.guidance && Array.isArray(view.guidance.items)) ? view.guidance.items : [];
+      const list = document.createElement("ul");
+      if (!items.length) {
+        const li = document.createElement("li");
+        li.textContent = "支持范围尚未确认；不作可计算承诺。";
+        list.appendChild(li);
+      }
+      for (const item of items) {
+        const li = document.createElement("li");
+        const head = makeEl("strong", null,
+          String(item.tax || "未识别条目") + " — " + String(item.subtopic || ""));
+        li.appendChild(head);
+        const labels = Array.isArray(item.labels_zh) ? item.labels_zh : [];
+        if (labels.length) {
+          const labelList = document.createElement("ul");
+          for (const text of labels) {
+            const labelItem = document.createElement("li");
+            labelItem.textContent = String(text);
+            labelList.appendChild(labelItem);
+          }
+          li.appendChild(labelList);
+        } else {
+          li.appendChild(makeEl("p", null, "支持范围尚未确认；不作可计算承诺。"));
+        }
+        if (item.limits_zh) li.appendChild(makeEl("p", "hint", String(item.limits_zh)));
+        const periods = Array.isArray(item.applicable_periods) ? item.applicable_periods : [];
+        if (periods.length) {
+          li.appendChild(makeEl("p", "hint", "适用期间：" + periods.join("、")));
+        }
+        list.appendChild(li);
+      }
+      coveragePanel.appendChild(list);
+      const link = makeEl("a", null, "覆盖详情：/coverage");
+      link.href = "/coverage";
+      coveragePanel.appendChild(link);
+    }
+    coverageToggle.addEventListener("click", () => {
+      const expanded = coverageToggle.getAttribute("aria-expanded") === "true";
+      coverageToggle.setAttribute("aria-expanded", expanded ? "false" : "true");
+      coveragePanel.hidden = expanded;
+      if (!expanded) renderCoveragePanel();
+      // 焦点留在按钮（004 §3.9）；不触发任何 preview/grant/chat/外发
+    });
+
+    // =====================================================================
+    // AI 对话面板（REQ-14 §7/§12.5：预览→授权→单次发送；拒绝/错误后本地照常）
+    // =====================================================================
+    const consentDialog = $id("consent-dialog");
+    const consentAllow = $id("consent-allow");
+    const chatInput = $id("chat-input");
+    const chatSend = $id("chat-send");
+    const chatMessages = $id("chat-messages");
     // 对话历史与待用预览仅存内存，随页面消亡（无任何本地持久化，C5.5）
     const chatHistory = [];
     let pendingPreview = null;
+    let chatInteractionSeq = 0; // 新 preview/clear 会推进；旧轮次不得清共享 UI
+
+    function resetChatState() {
+      // clear＝epoch 边界：旧预览/授权/聊天/提案 DOM 一律不得恢复。
+      chatInteractionSeq += 1; // 使任何在途 AI 轮次的 finally/丢弃逻辑失效
+      pendingPreview = null;
+      chatHistory.length = 0;
+      chatMessages.textContent = "";
+      chatInput.value = "";
+      consentAllow.disabled = false;
+      $id("consent-back").disabled = false;
+      $id("consent-deny").disabled = false;
+      if (!consentDialog.hidden) closeDialog(consentDialog);
+    }
 
     function addChatEntry(tagText, tagClass, text, modifierClass) {
       const item = document.createElement("li");
@@ -588,30 +3058,20 @@
       para.textContent = text;
       item.appendChild(para);
       chatMessages.appendChild(item);
+      return item;
     }
     function announce(text) {
       addChatEntry("提示", "badge-notice", text, "chat-entry-notice");
     }
-    async function readError(response) {
-      try {
-        const body = await response.json();
-        if (body && body.error) {
-          return { code: body.error.code || "", message_zh: body.error.message_zh || "" };
-        }
-      } catch (err) {
-        // 响应体非 JSON：按未知错误处理，由调用方兜底文案提示
-      }
-      return { code: "", message_zh: "" };
-    }
     function fillConsentDialog(preview) {
       const payload = preview.payload || {};
       // 接收方如实显示；未配置时不虚构接收方（§7）
-      document.getElementById("consent-endpoint").textContent = payload.endpoint
+      $id("consent-endpoint").textContent = payload.endpoint
         ? payload.endpoint + (payload.model ? "（模型：" + payload.model + "）" : "")
         : "未配置（本机模式）";
-      document.getElementById("consent-bytes").textContent = String(preview.payload_bytes);
-      document.getElementById("consent-hash").textContent = preview.payload_sha256;
-      document.getElementById("consent-payload").textContent = JSON.stringify(payload, null, 2);
+      $id("consent-bytes").textContent = String(preview.payload_bytes);
+      $id("consent-hash").textContent = preview.payload_sha256;
+      $id("consent-payload").textContent = JSON.stringify(payload, null, 2);
     }
     function lastUserContent(messages) {
       for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -619,6 +3079,251 @@
       }
       return "";
     }
+
+    // —— proposal 差异审阅（005 §16/§17：本地差异→采用→invalidate→手动 prepare）——
+    const PROPOSAL_FIELD_LABELS = [
+      [/employment_income_nai$/, "薪俸净入息（NAI）"],
+      [/mpf_mandatory_contributions$/, "MPF 强制性供款"],
+      [/has_assessable_salary_income$/, "是否有应课税薪俸收入"],
+      [/provisional_paid$/, "已缴暂缴税"],
+      [/marriage/, "婚姻期间"],
+      [/child_nomination/, "子女整组提名"],
+      [/salary_joint_nomination/, "联合薪俸责任人提名"],
+      [/assessment\.basis/, "计算基准"],
+      [/assessment\.candidates/, "参与比较的候选"],
+      [/assessment\.selection/, "采用方式"],
+    ];
+    function flattenForDiff(value, prefix, out) {
+      if (value === null || typeof value !== "object") {
+        out[prefix] = value === null ? "（空）" : typeof value === "boolean" ? (value ? "是" : "否") : String(value);
+        return;
+      }
+      if (Array.isArray(value)) {
+        if (!value.length) {
+          out[prefix] = "（空列表）";
+          return;
+        }
+        value.forEach((item, index) => flattenForDiff(item, prefix + "[" + index + "]", out));
+        return;
+      }
+      const keys = Object.keys(value);
+      if (!keys.length) {
+        out[prefix] = "（空对象）";
+        return;
+      }
+      for (const key of keys) flattenForDiff(value[key], prefix ? prefix + "." + key : key, out);
+    }
+    function diffLabel(path) {
+      for (const pair of PROPOSAL_FIELD_LABELS) {
+        if (pair[0].test(path)) return pair[1];
+      }
+      return path;
+    }
+    function renderProposalToolResult(entry) {
+      const result = entry.result || {};
+      const proposal = result.proposal || {};
+      if (!proposal.input || typeof proposal.input !== "object") return null;
+      const wrap = document.createElement("div");
+      wrap.appendChild(makeEl("p", "hint",
+        "结构化提议（只读检查已核对，未经你确认不生效）：本地差异如下；采用只会填入表单，仍需你重新检查、确认并计算。"));
+      const current = {};
+      flattenForDiff(collectInput(), "", current);
+      const incoming = {};
+      flattenForDiff(proposal.input, "", incoming);
+      const paths = Array.from(new Set(Object.keys(current).concat(Object.keys(incoming)))).sort();
+      const list = makeEl("ul", "proposal-diff");
+      let diffs = 0;
+      for (const path of paths) {
+        const before = current[path];
+        const after = incoming[path];
+        if (before === after) continue;
+        diffs += 1;
+        if (diffs > 40) {
+          const li = document.createElement("li");
+          li.textContent = "……（其余差异从略）";
+          list.appendChild(li);
+          break;
+        }
+        const li = document.createElement("li");
+        li.textContent = diffLabel(path) + "：" + (before === undefined ? "（未填写）" : before)
+          + " → " + (after === undefined ? "（移除）" : after);
+        list.appendChild(li);
+      }
+      if (!diffs) {
+        const li = document.createElement("li");
+        li.textContent = "与当前表单资料一致（无差异）。";
+        list.appendChild(li);
+      }
+      wrap.appendChild(list);
+      if (proposal.tax_type !== "salaries_tax") {
+        wrap.appendChild(makeEl("p", "hint", "该提议针对其他税项，本页不采用；请前往对应页面。"));
+        return wrap;
+      }
+      const adoptBtn = makeEl("button", "btn btn-secondary", "采用提议（填入表单，不自动提交）");
+      adoptBtn.type = "button";
+      adoptBtn.addEventListener("click", () => {
+        adoptProposal(proposal.input);
+        announce("提议已填入表单：请核对后重新按「确认资料并计算」（未自动提交、未外发）。");
+      });
+      wrap.appendChild(adoptBtn);
+      return wrap;
+    }
+    // 采用＝把 canonical input 解析回表单控件（仅本页已有的控件；未知部分忽略并提示）
+    function adoptProposal(input) {
+      const year = typeof input.year_of_assessment === "string" ? input.year_of_assessment : null;
+      if (year && [...yearSelect.options].some((o) => o.value === year)) {
+        yearSelect.value = year;
+        refreshLocators();
+      }
+      const y = year || currentYear();
+      const yearBlock = (input.years && input.years[y]) || {};
+      const financials = yearBlock.financials || {};
+      const self = financials.p1 || {};
+      $id("employment-income").value = self.employment_income_nai || "";
+      $id("mpf-contributions").value = self.mpf_mandatory_contributions || "";
+      if (self.has_assessable_salary_income !== undefined) {
+        $id("self-salary-ai").value = self.has_assessable_salary_income === true ? "true" : self.has_assessable_salary_income === false ? "false" : "unknown";
+      }
+      if (self.source_classification && self.source_classification.salary) {
+        $id("self-salary-source").value = self.source_classification.salary;
+      }
+      $id("provisional-paid").value = yearBlock.provisional_paid || "";
+      // 婚姻：从 marriage TF 推导界面状态（仅显示层；原始期间照样回填编辑器）
+      const household = yearBlock.household || {};
+      const periods = Array.isArray(household.marriage) ? household.marriage : [];
+      const anyMarried = periods.some((p) => p && p.value === "married");
+      const allUnmarried = periods.length > 0 && periods.every((p) => p && p.value === "unmarried");
+      marriedSelect.value = anyMarried ? "married" : allUnmarried ? "single" : "unknown";
+      marriagePeriods.textContent = "";
+      if (anyMarried) {
+        for (const p of periods) {
+          addMarriageRow(p.from, p.to, p.value, p.spouse_id);
+        }
+      }
+      livingApartPeriods.textContent = "";
+      for (const p of (Array.isArray(household.living_apart) ? household.living_apart : [])) {
+        addLivingApartRow(p.from, p.to, p.value === true ? "true" : p.value === false ? "false" : "unknown");
+      }
+      const spouse = financials.p2 || {};
+      if (anyMarried) {
+        if (spouse.has_assessable_salary_income !== undefined) {
+          spouseSalaryAi.value = spouse.has_assessable_salary_income === true ? "true" : spouse.has_assessable_salary_income === false ? "false" : "unknown";
+        }
+        $id("spouse-nai").value = spouse.employment_income_nai || "";
+        $id("spouse-mpf").value = spouse.mpf_mandatory_contributions || "";
+        if (spouse.source_classification && spouse.source_classification.salary) {
+          $id("spouse-salary-source").value = spouse.source_classification.salary;
+        }
+      }
+      const assessment = yearBlock.assessment || {};
+      if (assessment.basis) $id("assessment-basis").value = assessment.basis;
+      const candidates = Array.isArray(assessment.candidates) ? assessment.candidates : [];
+      candidateSeparate.checked = candidates.indexOf("salary_separate") >= 0;
+      candidateJoint.checked = anyMarried && candidates.indexOf("salary_joint") >= 0;
+      if (assessment.selection) {
+        const option = salarySelection.querySelector('option[value="' + assessment.selection + '"]');
+        if (option && !option.disabled) salarySelection.value = assessment.selection;
+      }
+      const actual = assessment.actual || {};
+      if (actual.salary_joint_elected !== undefined) {
+        $id("actual-joint-elected").value = actual.salary_joint_elected === true ? "true" : actual.salary_joint_elected === false ? "false" : "unknown";
+      }
+      if (actual.salary_joint_assessed !== undefined) {
+        $id("actual-joint-assessed").value = actual.salary_joint_assessed === true ? "true" : actual.salary_joint_assessed === false ? "false" : "unknown";
+      }
+      if (actual.history) $id("actual-history").value = actual.history;
+      const actualNom = actual.salary_joint_nomination;
+      if (actualNom && typeof actualNom === "object") {
+        $id("nom-actual-status").value = actualNom.status || "none";
+        if (actualNom.status === "named" && actualNom.person_id) {
+          $id("nom-actual-person").value = actualNom.person_id;
+        }
+      }
+      const hypoNom = assessment.hypothetical_salary_joint_nomination;
+      if (hypoNom && typeof hypoNom === "object") {
+        $id("nom-hypo-status").value = hypoNom.status || "none";
+        if (hypoNom.status === "named" && hypoNom.person_id) {
+          $id("nom-hypo-person").value = hypoNom.person_id;
+        }
+      }
+      const childNom = household.child_nomination;
+      if (childNom && typeof childNom === "object" && childNom.status) {
+        $id("child-nomination-status").value = childNom.status;
+        if (childNom.status === "agreed" && childNom.person_id) {
+          $id("child-nomination-person").value = childNom.person_id;
+        }
+      }
+      // 受养人条目：重建（别名按类别序号；原始事实尽量回填）
+      const relations = Array.isArray(yearBlock.relations) ? yearBlock.relations : [];
+      const claims = Array.isArray(yearBlock.claims) ? yearBlock.claims : [];
+      const subjects = Array.isArray(input.subjects) ? input.subjects : [];
+      const subjectFacts = yearBlock.subject_facts || {};
+      const depSubjects = subjects.filter((s) => s && typeof s.subject_id === "string" && s.subject_id.startsWith("d"));
+      while (dependants.length) dependants.pop();
+      for (const hostId of ["children-list", "parents-list", "siblings-list"]) {
+        $id(hostId).textContent = "";
+      }
+      depSeq = 0;
+      for (const subject of depSubjects) {
+        const relation = relations.find((r) => r && r.subject_id === subject.subject_id) || null;
+        const kinship = (relation && relation.kinship) || {};
+        const kind = kinship.kind === "parent" || kinship.kind === "grandparent" ? "parent"
+          : kinship.kind === "sibling" ? "sibling" : "child";
+        const entry = addDependant(kind);
+        // addDependant 分配新 d 序 ID；回填以 wire ID 为准的可见资料（别名仍为会话内）
+        if (subject.birth_date) {
+          entry.birth = subject.birth_date;
+          const birthInput = entry.fieldset.querySelector('[data-locator-template="request-subject-' + entry.id + '-birth-date"]');
+          if (birthInput) birthInput.value = subject.birth_date;
+        }
+        if (kinship.basis) {
+          entry.basis = kinship.basis;
+        }
+        if (relation && relation.actor_id) {
+          entry.actor = relation.actor_id;
+          if (entry.relSelect) entry.relSelect.value = relation.actor_id;
+        }
+        const facts = subjectFacts[subject.subject_id] || {};
+        for (const key of Object.keys(entry.tfControls)) {
+          if (key.startsWith("rel:")) {
+            const wire = RELATION_FACT_DEFS[key.slice(4)].wire;
+            if (relation && relation[wire]) entry.tfControls[key].write(relation[wire]);
+          } else {
+            const wire = SUBJECT_FACT_DEFS[key].wire;
+            if (facts[wire]) entry.tfControls[key].write(facts[wire]);
+          }
+        }
+        if (relation && relation.cash_maintenance && entry.cashInput) {
+          entry.cashInput.value = relation.cash_maintenance;
+        }
+        // 申索意图回填
+        for (const claim of claims) {
+          if (!claim || claim.subject_id !== subject.subject_id) continue;
+          for (const pair of entry.claimBoxes) {
+            const claimKind = pair.kind === "__kind__" ? entry.kinship : pair.kind;
+            if (claimKind === claim.kind) {
+              pair.box.checked = true;
+              entry.claims[pair.kind] = true;
+            }
+          }
+        }
+        entry.alias = (DEP_KIND_DEFS[kind].legend) + "（" + subject.subject_id + "）";
+        entry.legendEl.textContent = entry.alias;
+      }
+      // 其他申索
+      $id("claim-personal-disability").checked = claims.some((c) => c && c.kind === "personal_disability");
+      $id("claim-single-parent").checked = claims.some((c) => c && c.kind === "single_parent");
+      const spouseDda = claims.some((c) => c && c.kind === "disabled_dependant" && c.subject_id === "p2");
+      $id("spouse-dda-claim").checked = spouseDda;
+      const spouseFacts = subjectFacts.p2 || {};
+      if (Array.isArray(spouseFacts.govt_disability_allowance) && spouseFacts.govt_disability_allowance.length === 1) {
+        const v = spouseFacts.govt_disability_allowance[0].value;
+        $id("spouse-daa").value = v === true ? "true" : v === false ? "false" : "unknown";
+      }
+      updateVisibility();
+      noteEdit(); // 采用＝编辑：推进 generation、标 dirty、排队 invalidate（不自动 prepare）
+    }
+
     function describeToolResult(entry) {
       // 工具建议/结果只转写为纯文本建议（对话不取代输入确认，§6）
       if (!entry || typeof entry !== "object") return "";
@@ -644,23 +3349,54 @@
         chatInput.focus();
         return;
       }
+      // 本轮身份（preview）：clear/resync、草稿 generation 变化或更新的
+      // preview/clear 轮次 → 本响应作废；不得触碰新轮次的共享 UI。
+      const roundId = ++chatInteractionSeq;
+      const roundNonce = editor.nonce;
+      const roundEpoch = editor.epoch;
+      const roundGeneration = editor.generation;
+      const roundCurrent = () => (
+        chatInteractionSeq === roundId
+        && editor.nonce === roundNonce
+        && editor.epoch === roundEpoch
+        && editor.generation === roundGeneration
+      );
       chatSend.disabled = true;
       try {
         const messages = chatHistory.concat([{ role: "user", content: question }]);
         const response = await httpJson("POST", "/api/v1/ai/consent/preview", { messages });
+        if (!roundCurrent()) return;
         if (!response.ok) {
           const err = await readError(response);
+          if (!roundCurrent()) return;
           announce(err.message_zh || "无法生成外发预览；内容未发送，本地计算不受影响。");
           return;
         }
         const preview = await response.json();
-        pendingPreview = { consent_id: preview.consent_id, messages };
+        if (!roundCurrent()) return;
+        pendingPreview = {
+          consent_id: preview.consent_id,
+          messages: messages,
+          nonce: roundNonce,
+          epoch: roundEpoch,
+          generation: roundGeneration,
+          roundId: roundId,
+        };
         fillConsentDialog(preview);
         openDialog(consentDialog, chatSend);
       } catch (err) {
+        if (!roundCurrent()) return;
         announce("网络异常：预览未生成，内容未发送；本地计算不受影响。");
       } finally {
-        chatSend.disabled = false;
+        // 若已被更新的 preview/clear 轮次取代，发送态归新轮次所有。
+        if (chatInteractionSeq === roundId) {
+          updateButtons();
+          if (editorBlocked() || editorBusy() || editor.dirty) {
+            chatSend.disabled = true;
+          } else {
+            chatSend.disabled = false;
+          }
+        }
       }
     }
     chatSend.addEventListener("click", handleSend);
@@ -669,35 +3405,74 @@
     async function handleAllow() {
       if (!pendingPreview || consentAllow.disabled) return;
       const preview = pendingPreview;
+      const roundCurrent = () => (
+        pendingPreview === preview
+        && chatInteractionSeq === preview.roundId
+        && editor.nonce === preview.nonce
+        && editor.epoch === preview.epoch
+        && editor.generation === preview.generation
+      );
+      if (!roundCurrent()) {
+        discardChatRound(preview);
+        return;
+      }
       consentAllow.disabled = true;
-      document.getElementById("consent-back").disabled = true;
-      document.getElementById("consent-deny").disabled = true;
+      $id("consent-back").disabled = true;
+      $id("consent-deny").disabled = true;
       try {
         const grant = await httpJson("POST", "/api/v1/ai/consent", {
           consent_id: preview.consent_id,
         });
+        if (!roundCurrent()) { discardChatRound(preview); return; }
         if (!grant.ok) {
-          finishRoundWithError(await readError(grant));
+          const err = await readError(grant);
+          if (!roundCurrent()) { discardChatRound(preview); return; }
+          finishRoundWithError(err);
           return;
         }
         const sent = await httpJson("POST", "/api/v1/ai/chat", {
           consent_id: preview.consent_id,
           messages: preview.messages,
         });
+        if (!roundCurrent()) { discardChatRound(preview); return; }
         if (!sent.ok) {
-          finishRoundWithError(await readError(sent));
+          const err = await readError(sent);
+          if (!roundCurrent()) { discardChatRound(preview); return; }
+          finishRoundWithError(err);
           return;
         }
-        finishRoundWithSuccess(await sent.json(), preview);
+        const data = await sent.json();
+        if (!roundCurrent()) { discardChatRound(preview); return; }
+        if (!data || data.status === "discarded") {
+          // 005/004 §7：服务器 discarded 或空回复不得进入成功/聊天/提案。
+          discardChatRound(preview);
+          return;
+        }
+        finishRoundWithSuccess(data, preview);
       } catch (err) {
+        if (!roundCurrent()) { discardChatRound(preview); return; }
         finishRoundWithError({ code: "", message_zh: "" });
       } finally {
-        consentAllow.disabled = false;
-        document.getElementById("consent-back").disabled = false;
-        document.getElementById("consent-deny").disabled = false;
+        // 只有本 preview 轮次仍拥有共享 UI 时才恢复按钮；B 轮次不受 A 影响。
+        if (chatInteractionSeq === preview.roundId) {
+          consentAllow.disabled = false;
+          $id("consent-back").disabled = false;
+          $id("consent-deny").disabled = false;
+        }
       }
     }
+    function discardChatRound(preview) {
+      // 仅当本轮仍拥有当前 preview 时才作废其弹窗；若已有更新的 B 轮次，
+      // 不得清 B 的 pendingPreview/弹窗/按钮/发送态，也不写 A 的聊天/提案。
+      if (pendingPreview !== preview) return;
+      pendingPreview = null;
+      closeDialog(consentDialog);
+      updateButtons();
+    }
     function finishRoundWithSuccess(data, preview) {
+      if (pendingPreview !== preview || !data || data.status === "discarded") {
+        return;
+      }
       pendingPreview = null; // 单次授权已消费；下一轮必须重新预览并授权
       closeDialog(consentDialog);
       const question = lastUserContent(preview.messages);
@@ -709,7 +3484,13 @@
       chatHistory.push({ role: "assistant", content: data.content === undefined ? null : data.content });
       const results = Array.isArray(data.tool_results) ? data.tool_results : [];
       for (const entry of results) {
-        addChatEntry("待你确认", "badge-pending", describeToolResult(entry), "chat-entry-tool");
+        const item = addChatEntry("待你确认", "badge-pending", describeToolResult(entry), "chat-entry-tool");
+        // 005 §16：canonical proposal 本地差异审阅（采用＝填表＋失效＋手动重走流程）
+        const result = entry && entry.result;
+        if (result && typeof result === "object" && result.proposal) {
+          const block = renderProposalToolResult(entry);
+          if (block) item.appendChild(block);
+        }
       }
       chatInput.value = "";
     }
@@ -737,11 +3518,11 @@
       );
     }
     consentAllow.addEventListener("click", handleAllow);
-    document.getElementById("consent-back").addEventListener("click", () => {
+    $id("consent-back").addEventListener("click", () => {
       pendingPreview = null; // 返回修改＝放弃本次预览；下次发送重新预览
       closeDialog(consentDialog);
     });
-    document.getElementById("consent-deny").addEventListener("click", () => {
+    $id("consent-deny").addEventListener("click", () => {
       pendingPreview = null; // 拒绝＝不授予：内容不发送，本地功能照常
       closeDialog(consentDialog);
       announce("已选择不发送：内容未发送，本地计算照常可用。");
@@ -750,55 +3531,225 @@
       if (event.key === "Escape") pendingPreview = null; // 关闭即作废预览
     });
 
-    document.getElementById("calc-form").addEventListener("submit", (event) => {
+    // =====================================================================
+    // 表单接线：提交 → 摘要弹窗；弹窗确认 → 队列 prepare → confirm → execute
+    // =====================================================================
+    // 编辑事件去重：同一控件的 input/change 连发（或值未变化的 blur change）
+    // 不重复推进 generation（避免点击瞬间因 blur-change 误禁用按钮）。
+    function editEvent(event) {
+      const el = event.target;
+      if (el && el.dataset) {
+        const sig = el.type === "checkbox" ? (el.checked ? "1" : "0") : String(el.value);
+        if (el.dataset.editSig === sig) return;
+        el.dataset.editSig = sig;
+      }
+      if (event.type === "change" && event.target === yearSelect) refreshLocators();
+      noteEdit();
+    }
+    form.addEventListener("input", editEvent);
+    form.addEventListener("change", editEvent);
+    form.addEventListener("submit", (event) => {
       event.preventDefault();
-      openDialog(document.getElementById("confirm-dialog"), document.getElementById("confirm-and-calc"));
+      if (primaryButton.disabled) return;
+      clearErrors();
+      const input = collectInput();
+      confirmSummary.textContent = "";
+      const dl = document.createElement("dl");
+      dl.className = "facts";
+      for (const pair of buildSummary(input)) {
+        const dt = makeEl("dt", null, pair[0]);
+        const dd = makeEl("dd", null, pair[1]);
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      }
+      confirmSummary.appendChild(dl);
+      updateButtons();
+      openDialog(confirmDialog, primaryButton);
     });
-    document.getElementById("confirm-back").addEventListener("click", () => {
-      closeDialog(document.getElementById("confirm-dialog"));
+    $id("check-input").addEventListener("click", () => {
+      clearErrors();
+      const errors = validateCollected(collectInput());
+      if (errors.length) {
+        showError(errors);
+        statusRegion.textContent = "资料未确认；请按错误摘要修正。";
+      } else {
+        statusRegion.textContent = "资料形态检查通过；按「确认资料并计算」开始三段确认。";
+      }
+    });
+    $id("confirm-back").addEventListener("click", () => {
+      closeDialog(confirmDialog);
+    });
+    confirmSubmit.addEventListener("click", () => {
+      if (confirmSubmit.disabled) return;
+      const input = collectInput();
+      closeDialog(confirmDialog);
+      const errors = validateCollected(input);
+      if (errors.length) {
+        showError(errors);
+        statusRegion.textContent = "资料未确认；请按错误摘要修正后再计算。";
+        return;
+      }
+      statusRegion.textContent = "正在提交事实（prepare）……";
+      enqueueMutation({ kind: "prepare", input: input });
+      updateButtons();
     });
 
-    // —— 清空本次资料：服务端清空＋BroadcastChannel 通知同会话其他标签页同步（§12.6）——
-    // 清空语义（C5.4）：本地与聊天资料一并清除——对话历史、聊天 DOM、输入框、
-    // 待用 AI 预览全部作废；仅当服务端确认清除成功才本地清空并广播。
+    // =====================================================================
+    // 清空本次资料：epoch 边界（本地立即清空；服务端 epoch+1/rev0 经 ACK；
+    // 旧 epoch 迟到响应整体丢弃；ACK 丢失须显式重同步）＋BroadcastChannel 同步
+    // =====================================================================
     const channel = "BroadcastChannel" in window ? new BroadcastChannel("hktax-session") : null;
     function applyClearedLocally() {
-      const form = document.getElementById("calc-form");
-      if (form) form.reset();
-      const summary = document.getElementById("error-summary");
-      if (summary) summary.hidden = true;
-      chatHistory.length = 0; // 对话历史一并清除：旧内容不得随下次授权再次外发
-      pendingPreview = null; // 待用 AI 预览作废
-      while (chatMessages.firstChild) chatMessages.removeChild(chatMessages.firstChild);
-      chatInput.value = "";
-      if (!consentDialog.hidden) closeDialog(consentDialog);
-      statusRegion.textContent = "本次资料已清空（含聊天内容与待发送预览）。已下载或打印的外部副本不会被移除。";
+      editor.nonce += 1; // 旧 nonce 的迟到响应整体丢弃
+      editor.queue = [];
+      editor.inFlight = null;
+      editor.epoch = null;
+      editor.revision = null;
+      editor.initialized = false;
+      editor.generation += 1;
+      editor.dirty = false;
+      editor.conflict = null;
+      editor.prepared = null;
+      editor.currentResultGen = null;
+      editor.records = [];
+      // 004 §196：clear 同时清空聊天历史/DOM、待用预览与 proposal 状态。
+      resetChatState();
+      if (!confirmDialog.hidden) closeDialog(confirmDialog);
+      form.reset();
+      dependants.length = 0;
+      historicalSubjects.length = 0;
+      carePayments.length = 0;
+      depSeq = 0;
+      historicalSeq = 2;
+      careSeq = 0;
+      for (const hostId of ["children-list", "parents-list", "siblings-list", "care-list", "historical-subjects", "marriage-periods", "living-apart-periods"]) {
+        $id(hostId).textContent = "";
+      }
+      addMarriageRow(); // 已婚默认单段全年（配偶 p2）
+      resultSection.hidden = true;
+      resultStaleNote.hidden = true;
+      renderRecords();
+      clearErrors();
+      refreshLocators();
+      updateVisibility();
+      statusSummary.textContent = "尚未计算／结果摘要会在此显示。";
+      statusRegion.textContent = "本次资料已清空。已下载或打印的外部副本不会被移除。";
     }
     if (channel) {
       channel.addEventListener("message", (event) => {
-        if (event.data === "session-cleared") applyClearedLocally();
+        if (event.data === "session-cleared") {
+          applyClearedLocally();
+          // 不自动接纳跨标签页状态：须显式重同步读取当前会话版本
+          enterConflict("会话已在其他标签页清空：本地资料已同步清空。");
+        }
       });
     }
-    document.getElementById("clear-session").addEventListener("click", async () => {
+    let clearOpSeq = 0;
+    $id("clear-session").addEventListener("click", async () => {
+      // 本地 epoch 边界：立即清空；服务端 ACK（epoch+1/rev0）到达后采用。
+      // 每次 clear 捕获操作身份；旧 clear/resync/跨标签页边界之后到达的
+      // ACK 整体忽略，不得回滚 epoch/revision/conflict/按钮。
+      const clearToken = ++clearOpSeq;
+      applyClearedLocally();
+      const clearNonce = editor.nonce;
+      if (channel) channel.postMessage("session-cleared");
       try {
-        const probe = await fetch("/", { method: "GET", credentials: "same-origin" });
-        const token = probe.headers.get("X-CSRF-Token") || "";
-        const resp = await fetch("/api/v1/session", {
-          method: "DELETE",
-          credentials: "same-origin",
-          headers: { "X-CSRF-Token": token },
-        });
-        if (!resp.ok) {
-          announce("清空失败：服务端未确认清除（HTTP " + resp.status + "），本地与聊天资料保持不变。");
+        const response = await httpJson("DELETE", "/api/v1/session");
+        if (clearToken !== clearOpSeq || editor.nonce !== clearNonce) return;
+        if (response.ok) {
+          const ack = readAckPair(response);
+          if (ack !== null) {
+            editor.epoch = ack.epoch;
+            editor.revision = ack.revision;
+            editor.initialized = true;
+            editor.conflict = null;
+            updateButtons();
+            return;
+          }
+          enterConflict(
+            "清空的版本确认（ACK）缺失或畸形：本地已清空；请点击「重新同步」。"
+          );
           return;
         }
+        enterConflict(
+          "清空请求未成功（HTTP " + response.status + "）：本地已清空；服务器版本未确认。"
+        );
       } catch (err) {
-        announce("清空失败：无法连接服务端，本地与聊天资料保持不变（服务端会话未被清除）。");
-        return;
+        if (clearToken !== clearOpSeq || editor.nonce !== clearNonce) return;
+        // 网络失败仍清空本地界面状态；服务端会话随过期失效；ACK 丢失须显式重同步
+        enterConflict("清空的版本确认（ACK）未收到（网络异常）：本地已清空；请点击「重新同步」。");
       }
-      applyClearedLocally();
-      if (channel) channel.postMessage("session-cleared");
     });
+
+    // —— 显式重同步：只读取 runtime version；之后仍须重新审阅并手动确认 ——
+    // 版本 GET 与 init/resync/clear 共享边界：捕获请求身份；任一 await 后
+    // nonce/请求 token 变化即整体忽略，不得写 epoch/revision/queue/conflict/
+    // initialized/按钮（004 §7/§196）。
+    let sessionVersionSeq = 0;
+    resyncButton.addEventListener("click", async () => {
+      const resyncToken = ++sessionVersionSeq;
+      const resyncNonce = editor.nonce;
+      const stillCurrent = () => (
+        resyncToken === sessionVersionSeq && editor.nonce === resyncNonce
+      );
+      try {
+        const response = await fetch("/api/v1/meta/version", { method: "GET", credentials: "same-origin" });
+        if (!stillCurrent()) return;
+        if (!response.ok) {
+          statusRegion.textContent = "重新同步失败（HTTP " + response.status + "）。";
+          return;
+        }
+        const payload = await response.json();
+        if (!stillCurrent()) return;
+        editor.epoch = Number(payload.session_epoch);
+        editor.revision = Number(payload.input_revision);
+        editor.initialized = true;
+        editor.nonce += 1; // 重同步后到达的旧 ACK 整体忽略
+        editor.queue = [];
+        editor.inFlight = null;
+        editor.conflict = null;
+        editor.dirty = false;
+        updateButtons();
+        statusRegion.textContent = "已读取当前会话版本：请重新核对草稿资料，再手动按「确认资料并计算」。";
+        statusSummary.textContent = "已重新同步；请重新审阅资料后手动确认。";
+        // 重同步按钮随冲突解除而隐藏（不能持焦）；焦点移至下一步人工动作（004 §8.24）
+        primaryButton.focus();
+      } catch (err) {
+        if (!stillCurrent()) return;
+        statusRegion.textContent = "重新同步失败（网络异常）。";
+      }
+    });
+
+    // —— 初始化：读取既有 meta/version 的运行时 epoch/revision（不写入 binding/core）——
+    (async function initEditor() {
+      const initToken = ++sessionVersionSeq;
+      const initNonce = editor.nonce;
+      const stillCurrent = () => (
+        initToken === sessionVersionSeq && editor.nonce === initNonce
+      );
+      addMarriageRow(); // 默认单段全年婚姻期间（已婚时配偶 p2）
+      refreshLocators();
+      updateVisibility();
+      updateButtons();
+      try {
+        const response = await fetch("/api/v1/meta/version", { method: "GET", credentials: "same-origin" });
+        if (!stillCurrent()) return; // clear/resync 已建立更新边界
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (!stillCurrent()) return;
+        if (editor.epoch === null) {
+          editor.epoch = Number(payload.session_epoch);
+          editor.revision = Number(payload.input_revision);
+        }
+        editor.initialized = true;
+        updateButtons();
+        pumpQueue();
+      } catch (err) {
+        if (!stillCurrent()) return;
+        // 初始化失败：编辑仍记录在本地；首次 mutation 前会再次尝试
+        statusRegion.textContent = "会话版本尚未就绪；仍可填写资料（提交前会再次同步）。";
+      }
+    })();
   </script>
 </body>
 </html>

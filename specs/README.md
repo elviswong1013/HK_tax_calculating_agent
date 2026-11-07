@@ -1,6 +1,6 @@
 # 规格索引与开发门禁
 
-Updated: 2026-10-14
+Updated: 2026-10-20
 
 本仓库采用 PRD → SDD → TDD 的门禁式流程。初始化检查时，仓库没有已有规范目录、应用代码或测试框架。
 
@@ -34,5 +34,5 @@ Updated: 2026-10-14
 
 | 编号 | 主题 | PRD | SDD | 当前阶段 |
 | --- | --- | --- | --- | --- |
-| 002 | 税负正确性修复（第一阶段；001 的变更请求） | [PRD（Approved）](../docs/prd/002-tax-correctness-remediation.md) | [SDD（Approved 第五稿）](002-tax-correctness-remediation.md)；完整事实契约 [Annex 005（Approved 第五稿）](../docs/design/005-tax-correctness-fact-contract.md)；[验证附件 006（Approved 第五稿）](../docs/design/006-tax-correctness-verification.md)；证据档 [Evidence-only](../docs/research/002-tax-correctness-evidence.md) | Gate 1 已批准 AC-1..AC-13 及阶段顺序；第五稿受影响正式审查 **APPROVED**、有界圆桌 **READY FOR LAST P0**、最后 P0 attempt3/3 **GATE READY** 已归并，仅设计门禁；review4 与原 council 意见保留历史。**用户 Gate 2 已于 2026-10-14 明确批准「批准第五稿，进入实施」，SDD／Annex 005／006／004 当前状态改为 Approved（NOT Implemented）**；范围仅 **stage1 P1→P2→P3 严格 TDD**，阶段 2 扣除与阶段 3 完整 PA 另行审批；批准事件不构成设计、测试或运行验收证据；先修免税额资格、夫妻薪俸税入口及暂缴边界，不撤销 001 既有审批 |
+| 002 | 税负正确性修复（第一阶段；001 的变更请求） | [PRD（Approved）](../docs/prd/002-tax-correctness-remediation.md) | [SDD（Implemented（stage1））](002-tax-correctness-remediation.md)；完整事实契约 [Annex 005（Implemented（stage1））](../docs/design/005-tax-correctness-fact-contract.md)；[验证附件 006（Implemented（stage1））](../docs/design/006-tax-correctness-verification.md)；证据档 [Evidence-only](../docs/research/002-tax-correctness-evidence.md) | Gate 1 已批准 AC-1..AC-13 及阶段顺序；第五稿受影响正式审查 **APPROVED**、有界圆桌 **READY FOR LAST P0**、最后 P0 attempt3/3 **GATE READY** 已归并，仅设计门禁；review4 与原 council 意见保留历史。**用户 Gate 2 于 2026-10-14 明确批准「批准第五稿，进入实施」；P3 final5 oracle PASS＋acceptor ACCEPTED（2026-10-20）后，SDD／Annex 005／006／004 状态更新为 Implemented（stage1）**；范围仅 **stage1 P1→P2→P3 严格 TDD**，阶段 2 扣除与阶段 3 完整 PA 另行审批；历史 OPEN 边界保留（45-red、W1b 原始写前字节、F3 全量、pre-seal、21 项 history_unavailable、视觉 B/D/F、stage2/3 未扩）；验收不构成完整历史证明；先修免税额资格、夫妻薪俸税入口及暂缴边界，不撤销 001 既有审批 |
 | 001 | 香港税务计算 AI Agent 与交互界面 | [PRD](../docs/prd/001-hk-tax-agent.md) | [SDD（Implemented）](001-hk-tax-agent.md) | SDD **Implemented**（2026-10-09 第三轮独立验收 **ACCEPTED**——验收由用户指定 GLM-5.3 承载；全量 157 tests passed＋追溯 18/18；2026-10-08 @plan-reviewer 第六轮 APPROVED＋用户 Gate2 批准（含产品精度约定确认项）；[Annex C](../docs/design/002-hk-tax-technical-contract.md) 技术契约权威；税法语义以 [Annex D](../docs/design/003-hk-tax-legal-contract.md)（Approved）为权威——Cap.112/Cap.117 法定基础与三年度官方计算器行为已并入；Gate2 确认项以 Annex D D10 为唯一权威（法团/混合最终取整＝产品精度约定**已经用户 2026-10-08 Gate2 确认**——标注未经 IRD 文字证明、fail-closed guard 保留；物业单位已冻结；s.12B 已闭、s.60 首版不模拟追加评税、joint PA 首版输出规则已定）；HTML/PDF 解析依赖：用户 2026-10-07 答复「暂不增加依赖」——未批准、不得安装、不得绕道，选型 OPEN） |

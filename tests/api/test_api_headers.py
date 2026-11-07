@@ -34,10 +34,22 @@ def test_records_api_no_store_headers(api) -> None:
     # —— 计算路由（业务 422 拒算响应）同样 no-store ——
     invalid_body = {
         "tax_type": "salaries_tax",
-        "schema_version": "1.0.0",
-        "input": {"year_of_assessment": "2025_26"},  # 缺金额事实 → 422
+        "schema_version": "2.0.0",  # S002 ADR-3：薪俸 input v2
+        "input": {"year_of_assessment": "2025_26"},  # 缺 v2 Year 容器 → 422
     }
-    r2 = api.post("/api/v1/calc/prepare", json=invalid_body)
+    meta = api.get("/api/v1/meta/version")
+    assert meta.status_code == 200, meta.text
+    versions = meta.json()
+    r2 = api.post(
+        "/api/v1/calc/prepare",
+        json=invalid_body,
+        headers={
+            "If-Match": (
+                f'"edit-{int(versions["session_epoch"])}-'
+                f'{int(versions["input_revision"])}"'
+            )
+        },
+    )
     assert r2.status_code == 422, r2.text
     assert "no-store" in r2.headers.get("cache-control", ""), (
         "计算路由响应必须 no-store（C5.7 敏感响应）"

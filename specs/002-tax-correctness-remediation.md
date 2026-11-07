@@ -1,17 +1,17 @@
 # 002 — 税负正确性修复（第一阶段）— 软件设计文档（SDD）
 
-Status: Approved
+Status: Implemented
 Created: 2026-10-14
-Updated: 2026-10-14（Approved 第五稿：按 council NEEDS REVISION 四项合同＋`bounded-closure-design.md` 完成机械修订；formalreview4 APPROVED 为第四稿历史证据；修订对照见 `.slim/deepwork/tax-correctness-stage1/sdd-revision-r5.md`）；用户 Gate 2 于 2026-10-14 明确批准「批准第五稿，进入实施」；状态 Approved（仅 stage1；NOT Implemented；批准事件≠设计/测试/验收证据）
+Updated: 2026-10-20（P3 final5 oracle PASS + acceptor ACCEPTED；stage1 实施关闭；状态 Approved→Implemented；历史 OPEN 边界保留：45-red/W1b 原始写前字节/F3 全量/pre-seal/21 项 history_unavailable/视觉 B/D/F/stage2/3 未扩；代码/测试/文档语义未变）；2026-10-19（P3-W2 文档同步：脚本 002 追溯命名空间与离线固定束报告接口已实现；根全量/真实 Chromium/视觉证据见 W2 EV；规范语义未改，状态仍 Approved / NOT Implemented）；2026-10-14（Approved 第五稿：按 council NEEDS REVISION 四项合同＋`bounded-closure-design.md` 完成机械修订；formalreview4 APPROVED 为第四稿历史证据；修订对照见 `.slim/deepwork/tax-correctness-stage1/sdd-revision-r5.md`）；用户 Gate 2 于 2026-10-14 明确批准「批准第五稿，进入实施」；状态 Approved（仅 stage1；NOT Implemented；批准事件≠设计/测试/验收证据）
 PRD: docs/prd/002-tax-correctness-remediation.md（Approved，Gate 1 2026-10-14）
 模板: specs/_template.md
 索引: specs/README.md
 证据: docs/research/002-tax-correctness-evidence.md（Evidence-only）
-完整事实契约附件: docs/design/005-tax-correctness-fact-contract.md（Approved 第五稿，Annex 005；封闭字段表／谓词表／ledger／候选真值表／状态表／profile/digest／槽位退役／trace／失效协议／observer 所有权／availability 调用闭包／条件 assessment／S7 历史配偶）
-验证附件: docs/design/006-tax-correctness-verification.md（Approved 第五稿；完整历史断言处置与验证计划）
-只读基线: specs/001-hk-tax-agent.md（Implemented，不修改）；docs/design/002-hk-tax-technical-contract.md（Annex C，Approved，技术契约权威）；docs/design/003-hk-tax-legal-contract.md（**Annex D Status: Approved**（随 001 用户 Gate2 2026-10-08 批准）；本 CR 不撤销其效力，仅列 002 增量）；docs/design/004-tax-correctness-ui.md（Approved，UI delta，视觉意图不变）
+完整事实契约附件: docs/design/005-tax-correctness-fact-contract.md（Implemented（stage1），Annex 005；封闭字段表／谓词表／ledger／候选真值表／状态表／profile/digest／槽位退役／trace／失效协议／observer 所有权／availability 调用闭包／条件 assessment／S7 历史配偶）
+验证附件: docs/design/006-tax-correctness-verification.md（Implemented（stage1）；完整历史断言处置与验证计划）
+只读基线: specs/001-hk-tax-agent.md（Implemented，不修改）；docs/design/002-hk-tax-technical-contract.md（Annex C，Approved，技术契约权威）；docs/design/003-hk-tax-legal-contract.md（**Annex D Status: Approved**（随 001 用户 Gate2 2026-10-08 批准）；本 CR 不撤销其效力，仅列 002 增量）；docs/design/004-tax-correctness-ui.md（Implemented（stage1），UI delta，视觉意图不变）
 
-> 状态声明：Approved 第五稿；formalreview4 APPROVED 与原 council NEEDS REVISION 均保留为历史证据；本稿按 `bounded-closure-design.md` 完成修订，**受影响正式审查 APPROVED（`review-plan-r5.md`）＋有界圆桌 READY FOR LAST P0（`council-closure-r5.md`）＋最后 P0 attempt3/3 GATE READY（`gate-p0-r3.md`）已归并为设计门禁；用户于 2026-10-14 明确批准 Gate 2（原话「批准第五稿，进入实施」），本状态自此为 Approved**。获批范围＝**stage1 P1→P2→P3 严格 TDD**（阶段 2 扣除、阶段 3 完整 PA 另行审批）；**未实现（NOT Implemented）**，批准事件不构成设计/测试/验收或运行证据；仍不撤销 001 既有审批（PRD §6.1）；本文不创造测试、不承诺实现或运行验收通过。
+> 状态声明：Approved 第五稿；formalreview4 APPROVED 与原 council NEEDS REVISION 均保留为历史证据；本稿按 `bounded-closure-design.md` 完成修订，**受影响正式审查 APPROVED（`review-plan-r5.md`）＋有界圆桌 READY FOR LAST P0（`council-closure-r5.md`）＋最后 P0 attempt3/3 GATE READY（`gate-p0-r3.md`）已归并为设计门禁；用户于 2026-10-14 明确批准 Gate 2（原话「批准第五稿，进入实施」），本状态自 2026-10-14 为 Approved**；**2026-10-20 由 Approved 更新为 Implemented（P3 final5 双终验：oracle PASS＋acceptor ACCEPTED）**。获批范围＝**stage1 P1→P2→P3 严格 TDD**（阶段 2 扣除、阶段 3 完整 PA 另行审批）；**历史 OPEN 边界保留；批准/验收不构成完整历史证明**；仍不撤销 001 既有审批（PRD §6.1）；本文不创造测试、不承诺实现或运行验收通过。
 
 ## 0. 摘要与阅读指引
 
@@ -23,7 +23,7 @@ PRD: docs/prd/002-tax-correctness-remediation.md（Approved，Gate 1 2026-10-14�
 
 ### 0.2 标记约定
 
-- `【待核验】`、`【拟名】`、`【外部依赖】`、`【OPEN】` 同前；`【001 已批】`＝Approved／Implemented 契约，本 CR 不改；`【G2 决定项】`＝曾须用户 Gate 2 明确批准的增量（2026-10-14 已批准，仅 stage1；未实现）。
+- `【待核验】`、`【拟名】`、`【外部依赖】`、`【OPEN】` 同前；`【001 已批】`＝Approved／Implemented 契约，本 CR 不改；`【G2 决定项】`＝曾须用户 Gate 2 明确批准的增量（2026-10-14 已批准，仅 stage1；2026-10-20 已实现（stage1））。
 
 ### 0.3 验证与审批归属
 
@@ -187,9 +187,12 @@ $base = "C:\Users\elvis\AppData\Local\Temp\opencode\pytest-002-$stamp-$guid"
 .venv\Scripts\python -m pytest tests/updater tests/unit -q --basetemp="$base\p3a"
 .venv\Scripts\python -m pytest tests/e2e -q --basetemp="$base\p3b"
 .venv\Scripts\python -m pytest -q --basetemp="$base\p3c"
-# 追溯（**拟建新 CLI，当前不存在**；不得声称历史支持 002 命名空间）：
+# 追溯（001 接口保留；002 命名空间已实现，P3-W2）：
 .venv\Scripts\python scripts/check_req_traceability.py --spec 002 --require-002 1,2,3,4,5,6,7,8,9,10,11,12,13
-.venv\Scripts\python scripts/generate_validation_report.py
+# 报告（owner=002 只写 EV/reports；默认 001 历史路径不变；禁止覆盖 001 报告）：
+.venv\Scripts\python scripts/generate_validation_report.py --owner 002 --output <EV>\reports\002-engine-io-report.md
+# 固定束离线核验（默认不联网；live 需显式 --live）：
+.venv\Scripts\python -m scripts.official_calc_compare.run_all --report <EV>\reports\002-fixed-bundle.md
 ```
 
 ## 8. 编号需求 REQ-1..REQ-13（与 AC-1..AC-13 一一对应）
@@ -298,15 +301,16 @@ pytest（unit／engines／api／ai／updater／ui／e2e／acceptance＋Hypothesi
 1. 【已闭】Part 7 原文、s.31A(4) entitled、附表 4 三年度金额/独立 cap：见证据档 §3–§4。
 2. 【未核 provenance，非阻断】Ordinance No. 2 of 2026 精确生效文书：s.31(1B) 2026/27 金额/cap 以附表 4 第二表年标为直接依据；精确生效日后续补档，不一概阻断。
 3. 【manual 边界，不整类禁算】死亡年度、争议/Commissioner 分配、复杂来源、未核亲属组合、六个月月末边界：经 `special_situation`/`manual_issues` 提交并定位；不猜。
-4. 【G2 已批准（2026-10-14；仅 stage1；未实现）】公开 v2 事实模型（subject 注册表＋逐年事实＋actual/hypothetical salary-joint 提名字段）；**B1 条件式联合两遍接纳流程与归属矩阵**；有限混合 `pa_self`＋spouse no_pa（含跨模式共享单位 unsupported/unresolved 边界）；候选择案规则；`same_income`/`same_mpf` 投射白名单；PA 恒 partial 状态增量；固定 profile/新空库发布；**协议 delta**：invalidate＋全 7 prepare reservation/If-Match、Operation ACK 头、413 先推进后失败、clear epoch+1/rev0、原子消费快照/完成（外部调用方破坏性变更显式呈报）；**observer 受控 Resolution 边界与报告 purpose seed/update/CAS**；不得静默扩阶段 2/3。**第五稿新增 G2 候选项**：条件 assessment（inactive 字段可省、不写回默认）；availability 显式调用闭包与 replay 原束失败优先级；聊天本地覆盖指引消费者（同源、不动 payload）。
+4. 【G2 已批准（2026-10-14；仅 stage1；2026-10-20 已实现（stage1））】公开 v2 事实模型（subject 注册表＋逐年事实＋actual/hypothetical salary-joint 提名字段）；**B1 条件式联合两遍接纳流程与归属矩阵**；有限混合 `pa_self`＋spouse no_pa（含跨模式共享单位 unsupported/unresolved 边界）；候选择案规则；`same_income`/`same_mpf` 投射白名单；PA 恒 partial 状态增量；固定 profile/新空库发布；**协议 delta**：invalidate＋全 7 prepare reservation/If-Match、Operation ACK 头、413 先推进后失败、clear epoch+1/rev0、原子消费快照/完成（外部调用方破坏性变更显式呈报）；**observer 受控 Resolution 边界与报告 purpose seed/update/CAS**；不得静默扩阶段 2/3。**第五稿新增 G2 候选项**：条件 assessment（inactive 字段可省、不写回默认）；availability 显式调用闭包与 replay 原束失败优先级；聊天本地覆盖指引消费者（同源、不动 payload）。
 5. 【G2 授权范围】Gate 2 授权 Red cases/fixtures；**新增 auto slot 不因此放行**（六旧路径本期全部 stop-auto）。
 6. 【关】已按复审2/闸意见撤回任意资源上限与“输入必须已 canonical”限制；C2 兼容性（尾零/`2/6`）并入 Annex 005 §3。
 
 ## 13. 门禁与状态
 
-- 本文档 `Approved`（用户 Gate 2 2026-10-14「批准第五稿，进入实施」，范围仅 stage1；历史 formalreview4/r5、council READY 与 P0 attempt3/3 GATE READY 为设计门禁证据）；**未实现（NOT Implemented）**；P1–P3 实施按门禁执行。
+- 本文档 `Implemented`（stage1；2026-10-20 P3 final5 oracle PASS＋acceptor ACCEPTED；用户 Gate 2 2026-10-14「批准第五稿，进入实施」，范围仅 stage1；历史 formalreview4/r5、council READY 与 P0 attempt3/3 GATE READY 为设计门禁证据）；**历史 OPEN 边界保留；验收不构成完整历史证明**；P1–P3 实施按门禁执行并已关闭。
 - 文档 lint（本阶段实际执行、非生产 test）：示例 JSON 解析、profile digest 计算（未变则原值）、内部链接与类型一致性、表格未转义 `|` 完整性、尾随空白/NUL、`git diff --check`/status（含未跟踪）；执行记录见 `sdd-revision-r5.md`。
 - 实施门禁：P1／P2 后 oracle 闸＋**P3 后 oracle 闸（强制，与只读 acceptor 并列，不得互替）**＋P3 完整套件＋acceptor；第五稿 fresh affected formal APPROVED、有界 council READY、最后 P0 GATE READY 与**用户 Gate 2（2026-10-14）均已取得**；此后影响规范语义的变更仍须按流程重新审查；未运行／受阻记录为未通过。
+- P3-W2 实施记录（2026-10-19）：根全量 pytest（含真实 Chromium e2e）、acceptance 16/16、脚本 001/002 追溯与离线固定束报告、文档／pyproject `0.2.0` 同步已执行；证据见 W2 EV。**本记录为 2026-10-19 历史；当时不改变 Approved 语义，也不标记 Implemented；P3 oracle＋只读 acceptor 终验于 2026-10-20 final5 双终验关闭。**
 
 ## 14. 变更记录
 
@@ -316,3 +320,4 @@ pytest（unit／engines／api／ai／updater／ui／e2e／acceptance＋Hypothesi
 - 2026-10-14（第四稿）：按 review3 七项、P0-r2 B1–B6、corrective-design、supplementary-design 与 ui-singleflight 有界整合——B1 两遍条件式联合/归属矩阵/新提名字段/candidate_checks（§5.3；Annex 005 §4.10/§9.1）；B2 已核普通婚姻窗口替代 ANY 硬否决（§5.3；Annex 005 §9.1 S6）；B3 每候选有效选择/单位覆盖与 shared-unit unresolved（§5.4；Annex 005 §9.3）；R3#4 home_status TF/care 域、item_type 兼容、hk_presence 并集（Annex 005 §3/§4.8/§6.2/§4.7）；R3#5 与 supplement 的 reservation/ACK/413/clear epoch 与 ExecutionContext/Receipt/原子消费完成（§4.2；Annex 005 §12）；R3#6 observer sticky/checking/Resolution 所有权（Annex 005 §15.5）；B5 八路径精准触发/候选收据/seed purpose+empty-CAS/实测门禁（006 §7）；V006 全节点补录与 PA partial steps（006 §4.2、§5–§6）；P 标识随语义同步（Annex 005 §15.1）。状态维持 Draft，Gate 2 未过。
 - 2026-10-14（第五稿候选）：按 council 四项合同＋`bounded-closure-design.md` 机械修订——A：F §2.1–§2.2 availability 显式签名/可信来源表/replay 原束失败优先级，S §4.2 引用同步，V §4.5 reference/report 逐调用闭包；B：F §4.10 条件 assessment＋依赖表/8 短路规则/稀疏 PA 映射＋两个计划合成 fixture（§5.3/§5.4），S/V 同步；C：F §4.2 role 历史配偶优先级＋S7 locator/reason；D：F §17 聊天本地覆盖指引消费者（`chat_coverage_guidance(items)`，同源、不动 payload），S REQ-1/V 具名 Red 同步；维护同步：P1 命令补 consume/assessment 节点、S §13 补 mandatory P3 oracle、V B1 文件统一、README/头部同步（review4 历史、council NEEDS REVISION、P0 attempt3 未启动、Gate2 未过）。状态维持 Draft。
 - 2026-10-14（Gate 2）：用户明确批准「批准第五稿，进入实施」；SDD/Annex 005/006/004 状态改为 Approved（仅 stage1 P1→P2→P3 严格 TDD；阶段 2/3 另行审批），**未实现（NOT Implemented）**；批准事件不构成设计/测试/验收或运行证据。
+- 2026-10-20（Implemented 状态更新）：P3 final5 oracle PASS＋acceptor ACCEPTED；SDD/Annex 005/006/004 状态由 Approved 更新为 Implemented（stage1）；仅文档状态/日期/关闭记录；历史 OPEN 边界保留（45-red、W1b 原始写前字节、F3 全量、pre-seal、21 项 history_unavailable、视觉 B/D/F、stage2/3 未扩）；代码/测试/文档语义未变。

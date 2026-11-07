@@ -367,6 +367,10 @@
 
   function renderResult(payload) {
     resultSection.hidden = false;
+    resultStaleMarked = false;
+    const staleNote = document.getElementById("result-stale-note");
+    if (staleNote) staleNote.remove();
+    resultSection.removeAttribute("data-stale");
     const badge = STATUS_BADGES[payload.status] || [payload.status || "未知状态", ""];
     resultBadge.className = "badge" + (badge[1] ? " " + badge[1] : "");
     resultBadge.textContent = badge[0];
@@ -419,12 +423,38 @@
     }
     return csrfPromise;
   }
-  async function postJSON(url, body) {
+  // —— S002 §4.1 共享 If-Match 协议 delta：七税 prepare 共同要求
+  // `If-Match: "edit-<session_epoch>-<input_revision>"`（带引号，单一语法）。
+  // 每次 prepare 前经 meta/version 重取运行时版本（禁全局自动补头：仅本页
+  // prepare 站点显式补，confirm/execute/其他请求不受影响）。——
+  async function metaVersion() {
+    const response = await fetch("/api/v1/meta/version", {
+      method: "GET",
+      credentials: "same-origin",
+    });
+    if (!response.ok) {
+      throw new Error("无法读取会话版本（HTTP " + response.status + "）");
+    }
+    const payload = await response.json();
+    return {
+      epoch: Number(payload.session_epoch),
+      revision: Number(payload.input_revision),
+    };
+  }
+  function editIfMatch(version) {
+    return '"edit-' + String(version.epoch) + "-" + String(version.revision) + '"';
+  }
+  async function postJSON(url, body, ifMatch) {
     const token = await csrfToken();
+    const headers = { "Content-Type": "application/json", "X-CSRF-Token": token };
+    if (ifMatch) {
+      // 仅 prepare 调用点显式传入；不做任何全局自动补头（002 §4.1 纪律）
+      headers["If-Match"] = ifMatch;
+    }
     const response = await fetch(url, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+      headers: headers,
       body: JSON.stringify(body),
     });
     let payload = null;
@@ -437,17 +467,38 @@
       const detail = (payload && payload.error) || {};
       const problem = new Error(detail.message_zh || "请求失败（HTTP " + response.status + "）");
       problem.code = detail.code || "";
+      problem.status = response.status;
       throw problem;
     }
     return payload;
   }
   async function runCalculation(facts) {
     statusRegion.textContent = "正在提交事实（prepare）……";
-    const prepared = await postJSON("/api/v1/calc/prepare", {
-      tax_type: taxType,
-      schema_version: "1.0.0",
-      input: facts,
-    });
+    // 每次 prepare 前重取 `"edit-<epoch>-<revision>"`；成功后服务端 rev++，
+    // 下一次 prepare 再重取（004 §7／005 §12.1）。
+    const version = await metaVersion();
+    let prepared;
+    try {
+      prepared = await postJSON(
+        "/api/v1/calc/prepare",
+        {
+          tax_type: taxType,
+          schema_version: "1.0.0",
+          input: facts,
+        },
+        editIfMatch(version)
+      );
+    } catch (err) {
+      if (err && err.code === "E_CONFIRMATION_STALE") {
+        // 409＝会话在其他标签页/流程已变化：不自动接纳、不自动重发；
+        // 提示用户重新核对页面资料后再次发起（下一次会带新鲜 If-Match）。
+        throw new Error(
+          "会话资料已在其他地方更新：请核对页面资料后重新按「确认资料并计算」" +
+          "（本次未提交，未自动重试）。"
+        );
+      }
+      throw err;
+    }
     statusRegion.textContent = "正在确认（confirm）……";
     const confirmed = await postJSON("/api/v1/calc/confirm", {
       prepared_id: prepared.prepared_id,
@@ -460,11 +511,46 @@
     renderResult(payload);
   }
 
+  // —— 编辑即时失效（004 §7／005 §12.3）：任何输入变更立即禁用弹窗内旧
+  // 确认动作，并把当前结果标作「输入已更改，结果已失效」（历史记录不受影响）。
+  // 旧确认能力的服务端失效由 prepare reservation / invalidate CAS 保证
+  // （旧 confirmation 再 execute → 409 E_CONFIRMATION_STALE）。——
+  const confirmSubmitButton = document.getElementById("confirm-submit");
+  let resultStaleMarked = false;
+  function noteEdit() {
+    if (!dialog.hidden) {
+      // 弹窗已打开（摘要对应旧草稿）：禁用确认，提示返回修改后重新确认
+      confirmSubmitButton.disabled = true;
+      statusRegion.textContent =
+        "资料已更改：请「返回修改」后重新按「确认资料并计算」（旧确认已即时失效）。";
+    }
+    if (!resultSection.hidden && !resultStaleMarked) {
+      resultStaleMarked = true;
+      const stale = document.createElement("p");
+      stale.id = "result-stale-note";
+      const badge = document.createElement("span");
+      badge.className = "badge badge-partial";
+      badge.textContent = "输入已更改，结果已失效";
+      stale.appendChild(badge);
+      const note = document.createElement("span");
+      note.textContent = " 请重新检查、确认并计算；历史记录仍可按原记录查阅。";
+      stale.appendChild(note);
+      resultSection.insertBefore(stale, resultSection.children[1] || null);
+      resultSection.setAttribute("data-stale", "true");
+    }
+  }
+  form.addEventListener("input", noteEdit);
+  form.addEventListener("change", noteEdit);
+
   // —— 接线：表单提交 → 摘要对话框；对话框确认 → 三段计算 ——
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     clearErrors();
     resultSection.hidden = true;
+    resultStaleMarked = false;
+    const staleNote = document.getElementById("result-stale-note");
+    if (staleNote) staleNote.remove();
+    resultSection.removeAttribute("data-stale");
     const collected = COLLECTORS[taxType]();
     if (collected === null) {
       pendingFacts = null;
@@ -484,6 +570,7 @@
       dl.appendChild(dd);
     }
     confirmSummary.appendChild(dl);
+    confirmSubmitButton.disabled = false; // 新一轮确认：恢复弹窗确认按钮
     openDialog(primaryButton);
   });
   document.getElementById("check-input").addEventListener("click", () => {

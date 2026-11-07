@@ -274,7 +274,12 @@ def test_record_fields_complete(ui) -> None:
     assert record["tax_type"] == "salaries_tax"
     record_text = json.dumps(record, ensure_ascii=False)
     assert "2025_26" in record_text or "2025/26" in record_text, "记录必须含期间"
-    assert record["input"]["employment_income"] == "240000", "记录必须含输入摘要（原事实）"
+    assert (
+        record["input"]["years"]["2025_26"]["financials"]["p1"][
+            "employment_income_nai"
+        ]
+        == "240000"
+    ), "记录必须含输入摘要（v2 原事实；005 §4.6 完整路径）"
     assert binding_four_keys(record["binding"]), "记录必须含 bundle＋engine 四元组 binding"
 
     # —— 步骤与税率/扣除/暂缴/宽减要素 ——

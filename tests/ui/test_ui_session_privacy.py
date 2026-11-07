@@ -104,6 +104,7 @@ def test_ui_clear_all_tabs_no_financial_persistence(ui) -> None:
 
     session_epoch_before = ui.registry.session_epoch
     consent_epoch_before = ui.registry.consent_epoch
+    sid = ui.session_id()
 
     # —— 清空 ——
     clear = api.delete("/api/v1/session")
@@ -117,6 +118,24 @@ def test_ui_clear_all_tabs_no_financial_persistence(ui) -> None:
     )
     assert ui.registry.session_epoch > session_epoch_before, "清空必须 session_epoch++"
     assert ui.registry.consent_epoch > consent_epoch_before, "清空必须 consent_epoch++"
+    # 005 §12.3：clear 是 epoch 边界——精确 session_epoch+1 且 input_revision=0
+    # （不是任意递增／沿用旧 revision）。
+    assert payload.get("session_epoch") == session_epoch_before + 1, (
+        f"清空后 session_epoch 须精确 +1（005 §12.3），实际 "
+        f"{payload.get('session_epoch')!r}（清空前 {session_epoch_before}）"
+    )
+    assert ui.registry.session_epoch == session_epoch_before + 1, (
+        f"清空后 registry.session_epoch 须精确 +1（005 §12.3），实际 "
+        f"{ui.registry.session_epoch}（清空前 {session_epoch_before}）"
+    )
+    assert payload.get("input_revision") == 0, (
+        f"清空后 input_revision 须归零（005 §12.3），实际 "
+        f"{payload.get('input_revision')!r}"
+    )
+    assert ui.registry.current_input_revision(sid) == 0, (
+        f"清空后会话 input_revision 须为 0（005 §12.3），实际 "
+        f"{ui.registry.current_input_revision(sid)!r}"
+    )
 
     # —— 内存 records 已删除 ——
     gone = api.get(f"/api/v1/records/{record_id}")
@@ -124,13 +143,13 @@ def test_ui_clear_all_tabs_no_financial_persistence(ui) -> None:
     dl_gone = api.get(f"/api/v1/records/{record_id}/download")
     assert dl_gone.status_code == 404, "清空后下载入口同样不可用（内存态）"
 
-    # —— 未消费确认能力失效 ——
+    # —— 未消费确认能力失效（005 §12.3：clear 为 epoch 边界，旧能力 → 409 stale）——
     exec_after = api.post("/api/v1/calc/salaries-tax", json={"confirmation_id": pending})
-    assert exec_after.status_code == 403, (
-        f"清空后确认能力必须失效（403 E_CONFIRMATION_REQUIRED），"
-        f"实际 {exec_after.status_code}"
+    assert exec_after.status_code == 409, (
+        f"清空后确认能力必须失效（409 E_CONFIRMATION_STALE；005 §12.3 clear "
+        f"epoch 边界），实际 {exec_after.status_code}"
     )
-    assert _error_code(exec_after) == "E_CONFIRMATION_REQUIRED"
+    assert _error_code(exec_after) == "E_CONFIRMATION_STALE"
 
     # —— 外部副本不受影响：服务端不持有、不追溯删除下载/打印副本 ——
     # （下载响应本就 no-store、无服务端缓存；服务端无可「撤回」外部副本的通道）

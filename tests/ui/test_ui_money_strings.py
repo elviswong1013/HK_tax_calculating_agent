@@ -14,7 +14,13 @@ test_ui_money_as_string_no_parsefloat）。
 
 from __future__ import annotations
 
-from _helpers import audit_workbench, fetch_asset, salaries_input
+from _helpers import (
+    audit_workbench,
+    fetch_asset,
+    fresh_if_match,
+    prepare_body,
+    salaries_input,
+)
 
 
 def test_ui_money_as_string_no_parsefloat(ui) -> None:
@@ -27,19 +33,24 @@ def test_ui_money_as_string_no_parsefloat(ui) -> None:
     bad["employment_income"] = 240000  # int，非 AmountStr
     r_num = api.post(
         "/api/v1/calc/prepare",
-        json={"tax_type": "salaries_tax", "schema_version": "1.0.0", "input": bad},
+        json=prepare_body(bad),
+        headers=fresh_if_match(api),
     )
     assert r_num.status_code == 422, r_num.text
     assert r_num.json()["error"]["code"] == "E_INPUT_TYPE", (
         f"JSON number 金额必须 422 E_INPUT_TYPE（§12.3）：{r_num.text!r}"
     )
-    assert r_num.json()["error"]["field"] == "employment_income"
+    # v2 完整内容根路径（005 §13）：定位 employment income 事实
+    assert r_num.json()["error"]["field"] == (
+        "years.2025_26.financials.p1.employment_income_nai"
+    )
 
     # —— 字符串规范形合法（对照；不得因字符串而拒绝）——
     ok = salaries_input()  # "240000" 字符串
     r_str = api.post(
         "/api/v1/calc/prepare",
-        json={"tax_type": "salaries_tax", "schema_version": "1.0.0", "input": ok},
+        json=prepare_body(ok),
+        headers=fresh_if_match(api),
     )
     assert r_str.status_code == 201, r_str.text
 

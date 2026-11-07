@@ -2,14 +2,27 @@
 
 本地、确定性、单进程的香港税务／印花税估算工具（FastAPI ＋ Pydantic v2 ＋ Uvicorn ＋ Jinja2 SSR）。
 
-- 设计规格：`specs/001-hk-tax-agent.md`（Implemented）
+- 设计规格：`specs/001-hk-tax-agent.md`（Implemented）；`specs/002-tax-correctness-remediation.md`（Implemented（stage1）；阶段一）
 - 技术契约：`docs/design/002-hk-tax-technical-contract.md`（Annex C）
 - 税法语义：`docs/design/003-hk-tax-legal-contract.md`（Annex D）
+- 002 事实契约：`docs/design/005-tax-correctness-fact-contract.md`（Annex 005，Implemented（stage1））
+- 002 验证附件：`docs/design/006-tax-correctness-verification.md`（Implemented（stage1））
+- 002 UI delta：`docs/design/004-tax-correctness-ui.md`（Implemented（stage1））
 
 ## 免责声明（Disclaimer）
 
 - 本项目为独立开源工具，与香港税务局（IRD）**不隶属**；**不宣称**获得任何官方认证或认可，**不获税务局认证**（not endorsed / unofficial / not affiliated with the IRD）。
 - 所有计算结果仅为估算，不构成税务意见或法律意见；正式评税以香港税务局为准。
+
+## 002 实施状态（阶段一）
+
+- 版本：engine `0.2.0`；规则束 `rules_schema_version 2.0.0`；薪俸／个人入息课税 input `2.0.0`，其余五税 input 维持 `1.0.0`。
+- 状态：002 SDD／Annex 005／006／004 均为 **Implemented（stage1）**；P1／P2／P3 已完成；P3 final5 oracle PASS＋acceptor ACCEPTED（2026-10-20）；历史 OPEN 边界保留（45-red、W1b 原始写前字节、F3 全量、pre-seal、21 项 history_unavailable、视觉 B/D/F、stage2/3 未扩）；验收不构成完整历史证明。
+- 本次 W2 同步：根全量 pytest（含真实 Chromium e2e）、002 追溯命名空间、离线固定束报告与文档/版本对齐；视觉证据已截取供 designer 复核，**不构成视觉 PASS**。
+- 2026-10-20：P3 final5 oracle PASS＋acceptor ACCEPTED 后，SDD/Annex 005/006/004 状态更新为 Implemented（stage1）；仅文档状态/日期/关闭记录变更，代码/测试/脚本/规范语义未变。
+- 002 追溯：`.venv\Scripts\python scripts\check_req_traceability.py --spec 002 --require-002 1,2,3,4,5,6,7,8,9,10,11,12,13`（001 的 `--json`/`--require` 接口保持不变）。
+- 固定束离线核验：`.venv\Scripts\python -m scripts.official_calc_compare.run_all --report <EV>\reports\002-fixed-bundle.md`；默认不访问网络，输出明确标注「固定束核验/模拟，不代表实时规则可用性」，exit 0 不等于实时正确性。`--live` 才显式驱动官方计算器。
+- 001 报告脚本保持历史路径；002 报告必须用 `--owner 002 --output <EV>\reports\...`，脚本拒绝覆盖 `docs/validation/001-engine-io-report.md`。
 
 ## 环境要求
 
@@ -54,9 +67,9 @@ playwright install chromium           # 仅 e2e 测试需要
 
 ## 维护
 
-- 运行测试：`.venv\Scripts\python -m pytest tests/ -q`
-- 需求追溯检查：`.venv\Scripts\python scripts\check_req_traceability.py`
-- 持续集成：GitHub Actions（`.github/workflows/ci.yml`）在 push／PR 时以 Python 3.12、3.13 跑全量测试（含 Chromium e2e）；push 与手动触发时另跑 001 验证报告（门禁）＋002 官方计算器实时对比（尽力而为），并上传 `docs/validation/` 工件（报告＋截图）。
+- 运行测试：`.venv\Scripts\python -m pytest`（根目录全量，含 `tests/acceptance`、真实 Chromium `tests/e2e`、`tests/hypothesis` 与根测试）
+- 需求追溯检查：`.venv\Scripts\python scripts\check_req_traceability.py`（001；002 用 `--spec 002 --require-002 ...`）
+- 持续集成：GitHub Actions（`.github/workflows/ci.yml`）在 push／PR 时以 Python 3.12、3.13 跑全量测试（含 Chromium e2e）；push 与手动触发时另跑 001 验证报告（门禁）＋002 官方计算器对比（**默认离线固定束核验；live 需显式 `--live` opt-in**），并上传 `docs/validation/` 工件（报告＋截图）。
 - 数据库：运行时默认 `%LOCALAPPDATA%\hktax-agent\rules.db`（可用 `HKTAX_DB_PATH` 覆盖；仓库内无 DB）。
 - 规则更新节奏（与 `app/updater/scheduler` 实现一致）：
   - **首启即查**：首次启动（无成功记录）时调度器 `startup` 立即生成检查作业；逾期未查则启动时单次合并补查。

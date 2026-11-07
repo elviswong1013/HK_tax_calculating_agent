@@ -75,9 +75,17 @@ def test_acceptance_all_approved_tax_types_end_to_end(api) -> None:
                 )
                 continue
             payload = r_execute.json()
-            if payload.get("status") != "complete":
+            # 006:74 已批准 delta：薪俸/PA 按 v2 状态（PA 恒 partial）；
+            # 其余五税保持 complete。
+            if tax_type == "personal_assessment":
+                expected_status = ("partial",)
+            elif tax_type == "salaries_tax":
+                expected_status = ("complete", "partial")
+            else:
+                expected_status = ("complete",)
+            if payload.get("status") not in expected_status:
                 problems.append(
-                    f"{tax_type}: 最小合法事实须 status=complete，实际 "
+                    f"{tax_type}: 最小合法事实须 status∈{expected_status}，实际 "
                     f"{payload.get('status')!r}（missing={payload.get('missing_components')!r}）"
                 )
             if not payload.get("record_id"):

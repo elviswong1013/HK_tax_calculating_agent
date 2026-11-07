@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 
-from _helpers import salaries_input
+from _helpers import fresh_if_match, prepare_body, salaries_input
 
 
 def test_ui_prepare_needs_input_no_confirmability(ui) -> None:
@@ -32,11 +32,8 @@ def test_ui_prepare_needs_input_no_confirmability(ui) -> None:
     # —— needs_input：资格 unknown → 422＋中文问题清单，不产生 id（C3.2.1）——
     r = api.post(
         "/api/v1/calc/prepare",
-        json={
-            "tax_type": "salaries_tax",
-            "schema_version": "1.0.0",
-            "input": salaries_input(married_status={"value": "unknown"}),
-        },
+        json=prepare_body(salaries_input(married_status={"value": "unknown"})),
+        headers=fresh_if_match(api),
     )
     assert r.status_code == 422, r.text
     payload = r.json()

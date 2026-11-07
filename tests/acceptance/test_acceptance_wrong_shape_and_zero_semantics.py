@@ -39,6 +39,7 @@ from _acc_helpers import (
     confirm,
     error_code,
     execute,
+    fresh_if_match,
     prepare,
     salaries_min_facts,
 )
@@ -68,7 +69,11 @@ def test_acceptance_tax_type_wrong_shape_structured_rejection(api) -> None:
             "input": salaries_min_facts(with_provisional_zero=True),
         }
         try:
-            response = api.post(PREPARE_PATH, json=body)
+            # 本节点为直发调用（不经 _acc_helpers.prepare）：仅补新鲜 If-Match，
+            # body 六形状保持不变（tax_type 类型检查先于 schema）。
+            response = api.post(
+                PREPARE_PATH, json=body, headers=fresh_if_match(api)
+            )
         except Exception as exc:  # 未处理异常冒出＝500 等价（非结构化拒绝）
             problems.append(
                 f"tax_type={label!r}：未处理异常 {type(exc).__name__}: {exc}——"

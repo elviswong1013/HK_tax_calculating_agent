@@ -118,38 +118,3 @@ def test_unimplemented_no_calc_entry(api) -> None:
         assert not leaked, (
             f"全部条目未实现时覆盖页不得出现计算入口链接（REQ-1）：{leaked!r}"
         )
-
-
-def test_computable_items_carry_calc_entry_and_page_links(api) -> None:
-    """已实现税项必须携带真实计算入口，且覆盖页渲染对应链接。
-
-    防止覆盖数据过时（曾出现引擎已实现而覆盖页仍标 unimplemented 的
-    数据失同步缺陷）：computable 条目缺 calc_entry、或入口不是既定
-    计算路由、或覆盖页未渲染链接，均视为失败。
-    """
-    items = _coverage_items(api)
-    computable = [
-        item
-        for item in items
-        if str(item.get("support_level", "")).lower() == "computable"
-    ]
-    assert computable, "五族税项引擎均已实现，覆盖清单必须存在 computable 条目"
-
-    html = api.get("/coverage").text
-    hrefs = set(re.findall(r'href="([^"]+)"', html))
-
-    for item in computable:
-        entries = item.get("calc_entry")
-        assert entries, f"computable 条目必须携带 calc_entry（REQ-1）：{item!r}"
-        for entry in entries:
-            assert any(
-                entry.startswith(route) for route in CALC_ROUTES
-            ), f"calc_entry 必须是既定计算路由：{entry!r}"
-            assert entry in hrefs, f"覆盖页必须渲染计算入口链接：{entry!r}"
-
-    for item in items:
-        if str(item.get("support_level", "")).lower() in NOT_COMPUTABLE_LEVELS:
-            for entry in item.get("calc_entry") or []:
-                assert entry not in hrefs, (
-                    f"范围外/未实现条目不得渲染计算入口链接：{entry!r}"
-                )

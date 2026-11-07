@@ -35,39 +35,8 @@ DATA: dict = {
         {"width": "5000000", "rate_bp": 1500},
         {"rate_bp": 1600},
     ],
-    # 附表 3B（T1）：MPF 强制性供款扣除上限（每人）。
-    "mpf_deduction_cap": "18000",
-    # 附表 4（T1）：免税额矩阵，按课税年度；年度键存在＝该年度可算。
-    "allowances": {
-        "2024_25": {
-            "basic": "132000",
-            "married": "264000",
-            "child": "130000",
-            "child_birth_year_additional": "130000",
-            "child_aggregate_cap": "1170000",
-        },
-        "2025_26": {
-            "basic": "132000",
-            "married": "264000",
-            "child": "130000",
-            "child_birth_year_additional": "130000",
-            "child_aggregate_cap": "1170000",
-        },
-        # s.31(1B) 出生次年额外（2 of 2026 s.3）自 2026/27 生效：仅本行有键。
-        "2026_27": {
-            "basic": "145000",
-            "married": "290000",
-            "child": "140000",
-            "child_birth_year_additional": "140000",
-            "child_following_year_additional": "140000",
-            "child_aggregate_cap": "1260000",
-        },
-    },
-    # 附表 43（T1）：PA 行（s.100(4)，与薪俸行同值）；缺项＝该年度无宽减（2026/27）。
-    "reductions": {
-        "2024_25": {"percent_bp": 10000, "cap": "1500"},
-        "2025_26": {"percent_bp": 10000, "cap": "3000"},
-    },
+    # A8（005 §15.2）：PA 私有 Part5/MPF/宽减副本已退役；计算唯一读取
+    # data.allowances / data.reductions（共享矩阵）。
     # 附表 43（T1）：利得行（no_pa 比较组件用；每业务一个，s.100(2)/(3)）。
     "profits_reductions": {
         "2024_25": {"percent_bp": 10000, "cap": "1500"},

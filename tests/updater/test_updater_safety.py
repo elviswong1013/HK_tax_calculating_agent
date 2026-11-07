@@ -66,9 +66,18 @@ def _tree_digest(root: Path) -> dict[str, str]:
     return digests
 
 
-def test_updater_never_edits_source_tests_specs(tmp_path) -> None:
-    """完整更新运行（含变更候选→门禁→发布判定）后，源码/测试/规格逐字节不变。"""
+def test_updater_never_edits_source_tests_specs(
+    tmp_path, approved_temp_root, safety_guard
+) -> None:
+    """完整更新运行（含变更候选→门禁→发布判定）后，源码/测试/规格逐字节不变。
+
+    W-L L4：本次运行登记的全部 store（含门禁隐藏 Temp DB）须归属批准 Temp 根；
+    真实 app 边界（启动/真实 transport/模型出站）计数零增量。
+    """
     before = _tree_digest(REPO_ROOT)
+    stores_before = set(safety_guard.observed_store_paths())
+    counters_before = safety_guard.counter_snapshot()
+    gate_dirs_before = set(approved_temp_root.glob("hktax-gate-*"))
 
     clock = FakeClock(hk(2026, 3, 2))
     outbound = FakeOutbound(
@@ -104,4 +113,30 @@ def test_updater_never_edits_source_tests_specs(tmp_path) -> None:
     )
     assert not changed, (
         f"更新程序不得修改源码/测试/规格/文档/构建配置（SDD §5）：差异 {changed}"
+    )
+
+    # —— W-L L4：统一 Temp 约束/登记证据（含门禁隐藏 Temp DB）——
+    new_paths = sorted(set(safety_guard.observed_store_paths()) - stores_before)
+    assert new_paths, "更新运行必须登记其临时 store（含门禁临时 DB）至安全边界账"
+    for raw in new_paths:
+        path = Path(raw)
+        assert path == approved_temp_root or approved_temp_root in path.parents, (
+            f"更新运行 store 必须位于批准 Temp 根内：{path}"
+        )
+    gate_paths = [
+        Path(raw)
+        for raw in new_paths
+        if any(part.startswith("hktax-gate-") for part in Path(raw).parts)
+    ]
+    for path in gate_paths:
+        assert path.parent.parent == approved_temp_root, (
+            f"门禁临时目录必须归属批准 Temp 根：{path}"
+        )
+    new_gate_dirs = set(approved_temp_root.glob("hktax-gate-*")) - gate_dirs_before
+    assert {path.parent for path in gate_paths} == new_gate_dirs, (
+        f"门禁临时目录须与批准根内新建 hktax-gate-* 一致：{gate_paths!r}"
+    )
+    # 真实边界（启动/真实 transport/模型出站）零调用：FakeOutbound 不触真实出站
+    assert safety_guard.counter_deltas(counters_before) == {}, (
+        "更新测试不得触发真实 app 边界调用（启动/真实 transport/模型）"
     )

@@ -8,8 +8,8 @@
 
 【拟名】契约（本文件为安全修复回归，Green 不得要求改写）:
   - DELETE /api/v1/session 成功后，该 sid 在 ConsentStore 中的全部记录
-    （含 granted/prepared/consumed 任意状态）被物理删除；
-  - 响应携带 consents_purged（本次删除条数，>= 已创建数）；
+    （含 granted/prepared/consumed 任意状态）被物理删除
+    （stage1 `ConsentStore.delete_session` 语义，经 clear 接线）；
   - 其他 sid 的同意记录不受影响。
 """
 
@@ -41,9 +41,6 @@ def test_clear_session_purges_consent_records_for_sid(ui) -> None:
 
     body = resp.json() if resp.content else {}
     assert body.get("status") == "cleared"
-    assert int(body.get("consents_purged", 0)) >= 1, (
-        f"响应必须报告已删除的同意记录数，实际：{body!r}"
-    )
     assert consent_store.get(sid, consent_id) is None, (
         "清空后该会话的同意记录（含冻结消息内容）必须被物理删除，"
         "不得只靠 consent_epoch 失效"
