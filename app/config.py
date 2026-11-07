@@ -11,6 +11,11 @@ DEFAULT_PORT = 8000
 PREPARE_TTL_SECONDS = 300  # C3.2.1：prepared TTL
 CONFIRMATION_TTL_SECONDS = 300  # C3.2.2：确认能力 TTL
 MAX_BODY_BYTES = 1_048_576  # C2.9：请求体 ≤1MB
+# —— 安全批次 B（2026-11，安全审查 M3/M4；详见 hktax-security-review-20261105）——
+SESSION_IDLE_TTL_SECONDS = 1800  # M3：会话闲置 TTL（30 分钟无使用即过期）
+SESSION_ABSOLUTE_TTL_SECONDS = 7200  # M3：会话绝对生命周期（2 小时）
+SESSION_REGISTRY_MAX_SESSIONS = 64  # M3：进程内会话注册表容量上限（内存 DoS 防护）
+MODEL_OUTBOUND_TOTAL_TIMEOUT_SECONDS = 45.0  # M4：模型外发端到端总期限（含 30s 传输超时）
 SUPPORTED_YEARS = ("2024_25", "2025_26", "2026_27")  # SDD §1 直接税年度
 SESSION_COOKIE_NAME = "hktax_session"  # C5.3：不透明 HttpOnly 会话 cookie
 

@@ -96,13 +96,17 @@ class HttpxModelOutbound:
         )
         chunks: list[bytes] = []
         total = 0
-        for chunk in response.iter_bytes():
-            total += len(chunk)
-            if total > MAX_STREAM_BYTES:
-                response.close()  # C4.4：超限即中止连接，不无限缓冲
-                raise AppError(
-                    "E_MODEL_BAD_RESPONSE",
-                    "模型响应超过流式读取上限（1MB）；已中止连接",
-                )
-            chunks.append(chunk)
+        try:
+            for chunk in response.iter_bytes():
+                total += len(chunk)
+                if total > MAX_STREAM_BYTES:
+                    # C4.4：超限即中止连接，不无限缓冲（统一由 finally 关闭）
+                    raise AppError(
+                        "E_MODEL_BAD_RESPONSE",
+                        "模型响应超过流式读取上限（1MB）；已中止连接",
+                    )
+                chunks.append(chunk)
+        finally:
+            # 安全批次B（M4）：成功、异常、超限路径统一关闭响应与底层 client
+            response.close()
         return {"status_code": response.status_code, "body": b"".join(chunks)}

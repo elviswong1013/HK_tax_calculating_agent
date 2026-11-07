@@ -22,6 +22,7 @@ import secrets
 import threading
 import time
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 import httpx
 
@@ -48,13 +49,43 @@ _CONSENT_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 
 
+def _validate_upstream_endpoint(url: str | None) -> None:
+    """安全批次B（M6）：模型端点策略——fail closed。
+
+    - 仅允许 https（防止误配 http:// 时 Bearer 密钥与聊天内容明文外发）；
+      本机回环 host（127.0.0.1/localhost/::1）允许 http（本地模型）；
+    - 拒绝 URL 内嵌 userinfo 凭据（密钥只经 env 与 Authorization 头）。
+    违规 → E_MODEL_UNCONFIGURED（本地计算照常可用）。
+    """
+    if url is None:
+        return
+    parsed = urlparse(url)
+    if parsed.username or parsed.password:
+        raise AppError(
+            "E_MODEL_UNCONFIGURED",
+            "模型端点不得在 URL 内嵌凭据；请仅使用环境变量 API key（C4.2）",
+        )
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    if scheme == "https":
+        return
+    if scheme == "http" and host in {"127.0.0.1", "localhost", "::1"}:
+        return
+    raise AppError(
+        "E_MODEL_UNCONFIGURED",
+        "模型端点必须为 https（本机回环 http 除外）；当前端点将被拒绝，本地计算照常可用",
+    )
+
+
 def model_config() -> dict[str, Any]:
     """读取模型端点配置（无密钥/端点 → 未配置；C3.7 E_MODEL_UNCONFIGURED）。"""
-    return {
+    config = {
         "upstream_endpoint": os.environ.get(MODEL_ENDPOINT_ENV) or None,
         "model": os.environ.get(MODEL_NAME_ENV) or None,
         "api_key": os.environ.get(MODEL_API_KEY_ENV) or None,
     }
+    _validate_upstream_endpoint(config["upstream_endpoint"])
+    return config
 
 
 def build_payload(

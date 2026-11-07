@@ -15,6 +15,7 @@ preview/授予/撤回/chat（C4.5–C4.8）、update check/jobs（singleflight 2
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import json
@@ -48,6 +49,7 @@ from app.config import (
     CONFIRMATION_TTL_SECONDS,
     ENGINE_VERSION,
     MAX_BODY_BYTES,
+    MODEL_OUTBOUND_TOTAL_TIMEOUT_SECONDS,
     PREPARE_TTL_SECONDS,
     RULES_SCHEMA_VERSION,
     SUPPORTED_YEARS,
@@ -758,12 +760,25 @@ def register_routes(app: Any, templates: Any) -> None:
         round_consent_epoch = registry.consent_epoch
         # ⑥发送前原子消费（consumed 终态，不可回滚）→ ⑦经接缝原样发送冻结字节
         consent_store.transition(sid, consent_id, "consumed")
-        raw = dispatch_outbound(
-            getattr(request.app.state, "model_outbound", None),
-            config["upstream_endpoint"],
-            config["api_key"],
-            item["frozen_bytes"],
-        )
+        # 安全批次B（M4）：同步 HTTPX 外发移出事件循环（to_thread），并以
+        # 端到端总期限兜底（45s > 传输 30s 超时）；超时按 E_MODEL_TIMEOUT
+        # 分类，迟到线程结果按 §005:698 整轮丢弃语义不消费。
+        try:
+            raw = await asyncio.wait_for(
+                asyncio.to_thread(
+                    dispatch_outbound,
+                    getattr(request.app.state, "model_outbound", None),
+                    config["upstream_endpoint"],
+                    config["api_key"],
+                    item["frozen_bytes"],
+                ),
+                timeout=MODEL_OUTBOUND_TOTAL_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise AppError(
+                "E_MODEL_TIMEOUT",
+                "模型外发超过端到端总期限（45s）；请稍后重试",
+            ) from exc
         # 005:698：迟到响应整轮丢弃——epoch/revision/consent/consent_epoch 任一
         # 已变即不执行任何工具（无 executed 条目、无记录、不消费任何确认）。
         current_consent = consent_store.get(sid, consent_id)
@@ -830,8 +845,14 @@ def register_routes(app: Any, templates: Any) -> None:
 
     @app.post("/api/v1/update/check")
     async def update_check(request: Request) -> JSONResponse:
-        """触发检查；进行中 → 202＋现有 job_id（singleflight 幂等，C6.6）。"""
-        job = _scheduler(request).trigger_manual()
+        """触发检查；进行中 → 202＋现有 job_id（singleflight 幂等，C6.6）。
+
+        安全批次B（M4）：同步更新流水线移出事件循环（to_thread），避免
+        手动检查期间阻塞全部 API/页面请求；不设外层终止（避免打断
+        singleflight 作业状态机，作业自身有超时与隔离）。
+        """
+        scheduler = _scheduler(request)
+        job = await asyncio.to_thread(scheduler.trigger_manual)
         in_progress = bool(job.get("in_progress"))
         return JSONResponse(
             status_code=202 if in_progress else 200,
@@ -970,6 +991,10 @@ def register_routes(app: Any, templates: Any) -> None:
 async def _read_json(request: Request) -> Any:
     try:
         return await request.json()
+    except AppError:
+        # 安全批次B（M4）：读体阶段的安全限流（如按累计字节 413）必须穿透，
+        # 不得被归类为 JSON 解析错误
+        raise
     except Exception:
         raise AppError("E_INPUT_TYPE", "请求体不是合法 JSON", field="body") from None
 

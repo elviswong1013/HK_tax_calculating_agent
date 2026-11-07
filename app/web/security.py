@@ -37,7 +37,10 @@ from app.config import (
     ENGINE_VERSION,
     MAX_BODY_BYTES,
     PREPARE_TTL_SECONDS,
+    SESSION_ABSOLUTE_TTL_SECONDS,
     SESSION_COOKIE_NAME,
+    SESSION_IDLE_TTL_SECONDS,
+    SESSION_REGISTRY_MAX_SESSIONS,
 )
 from app.core.errors import AppError
 from app.core.hashing import (
@@ -180,6 +183,8 @@ class SessionRegistry:
         self._sessions: dict[str, dict[str, Any]] = {}
         self.session_epoch = 1
         self.consent_epoch = 1
+        # 安全批次B（M3）：会话生命周期时钟（测试可注入假时钟）
+        self._clock = time.monotonic
         # S002 §4.1/§12＋复核报告 B2：input_revision 属**每个 sid 的会话状态**
         # （clear＝epoch 边界且该 sid rev=0）；不入 binding/core 哈希。
     # —— cookie 签名（不透明会话 id）——
@@ -192,17 +197,52 @@ class SessionRegistry:
         sid, _, signature = cookie_value.rpartition(".")
         if not sid or not hmac.compare_digest(_hmac_hex(self._key, sid), signature):
             return None
+        # 注：闲置 TTL 的刷新只在 ensure_session 命中有效会话时进行
+        # （M3）；此处不做 touch，保证过期判定使用刷新前的 last_used。
         return sid
 
+    # —— 安全批次B（M3）：会话 TTL 与注册表容量 ————————————————
+    def _expired_locked(self, session: dict[str, Any], now: float) -> bool:
+        return (
+            now - session["created_at"] > SESSION_ABSOLUTE_TTL_SECONDS
+            or now - session["last_used"] > SESSION_IDLE_TTL_SECONDS
+        )
+
+    def _evict_locked(self, now: float) -> None:
+        for sid in [
+            sid
+            for sid, session in self._sessions.items()
+            if self._expired_locked(session, now)
+        ]:
+            self._sessions.pop(sid, None)
+        # 容量淘汰：调用方即将再写入 1 个新会话，需先腾出位置
+        # （len - MAX + 1 个最久未用），确保写入后总数 ≤ MAX。
+        overflow = len(self._sessions) - SESSION_REGISTRY_MAX_SESSIONS + 1
+        if overflow > 0:
+            ordered = sorted(
+                self._sessions.items(), key=lambda item: item[1]["last_used"]
+            )
+            for sid, _ in ordered[:overflow]:
+                self._sessions.pop(sid, None)
+
     def ensure_session(self, cookie_value: str | None) -> tuple[str, str | None]:
-        """返回 (sid, set_cookie)；已持有效会话时 set_cookie 为 None。"""
+        """返回 (sid, set_cookie)；已持有效会话时 set_cookie 为 None。
+
+        安全批次B（M3）：会话闲置 30 分钟或绝对 2 小时过期后按新会话处理；
+        注册表超容量时按 last_used 淘汰最久未用会话（内存 DoS 防护）。
+        """
         sid = self.sid_from_cookie(cookie_value)
+        now = self._clock()
         if sid is not None:
             with self._lock:
-                if sid in self._sessions:
+                session = self._sessions.get(sid)
+                if session is not None and not self._expired_locked(session, now):
+                    session["last_used"] = now
+                    self._evict_locked(now)
                     return sid, None
         new_sid = secrets.token_urlsafe(32)
         with self._lock:
+            self._evict_locked(now)
             self._sessions[new_sid] = {
                 "csrf": secrets.token_urlsafe(32),
                 "prepared": {},
@@ -210,6 +250,8 @@ class SessionRegistry:
                 "executions": {},
                 "records": {},
                 "input_revision": 0,
+                "created_at": now,
+                "last_used": now,
             }
         return new_sid, self.cookie_for(new_sid)
 
@@ -1037,6 +1079,31 @@ _CONTENT_DISPOSITION_ROUTES: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+class _CountingReceive:
+    """安全批次B（M4）：按实际接收字节累计限流。
+
+    C2.9 原实现只信任 Content-Length 头；无 CL 的 chunked 请求可在拒绝前
+    无限缓冲。本包装在 ASGI receive 层累计 http.request 字节，超限即中止
+    读取并抛 E_INPUT_OVERSIZE（413），不依赖请求头声明。
+    """
+
+    def __init__(self, receive: Any, max_body_bytes: int) -> None:
+        self._receive = receive
+        self._max_body_bytes = max_body_bytes
+        self._seen = 0
+
+    async def __call__(self) -> dict:
+        message = await self._receive()
+        if message.get("type") == "http.request":
+            self._seen += len(message.get("body") or b"")
+            if self._seen > self._max_body_bytes:
+                raise AppError(
+                    "E_INPUT_OVERSIZE",
+                    "请求体超过 1MB 上限（C2.9，按实际接收字节累计）",
+                )
+        return message
+
+
 class SecurityMiddleware:
     """外层 ASGI 安全中间件：Host → Origin → CSRF →（prepare reservation）→
     载荷上限 → 响应头注入（C5；Annex 005 §12.1/§12.2）。
@@ -1245,7 +1312,21 @@ class SecurityMiddleware:
             await send({**message, "headers": response_headers})
 
         try:
-            await self.app(scope, receive, send_wrapper)
+            await self.app(
+                scope, _CountingReceive(receive, self.max_body_bytes), send_wrapper
+            )
+        except AppError as exc:
+            # 安全批次B（M4）：读体阶段抛出的业务错误（如按累计字节 413）——
+            # 响应未开始则按统一错误形状回应该错误（prepare 分支保留 ACK 头）；
+            # 已开始只能中止。路由层 AppError 已由内层异常处理器消化，不至此。
+            if state.get("response_started"):
+                raise
+            extra = (
+                _applied_headers(state["edit_reservation"])
+                if state.get("edit_reservation") is not None
+                else None
+            )
+            await self._send_error(send, exc, is_api, extra_headers=extra)
         except Exception:
             # R2：reservation 后意外异常 → 安全 500（保留本操作 ACK＋no-store，
             # 不泄露异常原文）；响应已开始则不再注入（避免损坏响应流）。
