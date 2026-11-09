@@ -32,10 +32,8 @@
 ## 安装
 
 ```powershell
-py -3.13 -m venv .venv
-.venv\Scripts\python --version        # 必须输出 3.12.x / 3.13.x，否则删除重建
-.venv\Scripts\pip install -e ".[dev]"
-playwright install chromium           # 仅 e2e 测试需要
+uv sync --locked --all-extras          # 按 uv.lock 创建 .venv 并安装锁定依赖
+uv run playwright install chromium     # 仅 e2e 测试需要
 ```
 
 ## 启动
@@ -68,8 +66,9 @@ playwright install chromium           # 仅 e2e 测试需要
 ## 维护
 
 - 运行测试：`.venv\Scripts\python -m pytest`（根目录全量，含 `tests/acceptance`、真实 Chromium `tests/e2e`、`tests/hypothesis` 与根测试）
+- 依赖锁定与审计：`uv.lock` 入库；`uv sync --locked --all-extras` 安装锁定版本；升级依赖后 `uv lock` 重新解析并提交；`uv run pip-audit --skip-editable` 审计已安装依赖的已知漏洞（CI 的 `audit` 作业每轮执行，发现即失败）。
 - 需求追溯检查：`.venv\Scripts\python scripts\check_req_traceability.py`（001；002 用 `--spec 002 --require-002 ...`）
-- 持续集成：GitHub Actions（`.github/workflows/ci.yml`）在 push／PR 时以 Python 3.12、3.13 跑全量测试（含 Chromium e2e）；push 与手动触发时另跑 001 验证报告（门禁）＋002 官方计算器对比（**默认离线固定束核验；live 需显式 `--live` opt-in**），并上传 `docs/validation/` 工件（报告＋截图）。
+- 持续集成：GitHub Actions（`.github/workflows/ci.yml`）在 push／PR 时以 Python 3.12、3.13 按 `uv.lock` 安装依赖并跑全量测试（含 Chromium e2e），另跑依赖漏洞审计；push 与手动触发时另跑 001 验证报告（门禁）＋002 官方计算器对比（**默认离线固定束核验；live 需显式 `--live` opt-in**），并上传 `docs/validation/` 工件（报告＋截图）。
 - 数据库：运行时默认 `%LOCALAPPDATA%\hktax-agent\rules.db`（可用 `HKTAX_DB_PATH` 覆盖；仓库内无 DB）。
 - 规则更新节奏（与 `app/updater/scheduler` 实现一致）：
   - **首启即查**：首次启动（无成功记录）时调度器 `startup` 立即生成检查作业；逾期未查则启动时单次合并补查。

@@ -23,6 +23,8 @@ dev = [
     "pytest>=8",
     "hypothesis>=6",
     "playwright>=1.45",
+    # F-10：持续依赖漏洞审计（CI `uv run pip-audit`）；随 uv.lock 锁定。
+    "pip-audit>=2.9",
 ]
 
 [tool.setuptools.packages.find]
