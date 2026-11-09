@@ -363,6 +363,7 @@ CHANGE_CAP_3500 = {
     "fullpath": "salaries.reductions.2025_26.cap",
     "value": "3500",
     "source_id": "ird_budget",
+    "url": BUDGET_URL,
     "anchor": "heading:Salaries Tax Reduction#row:2025/26#col:Cap",
 }
 

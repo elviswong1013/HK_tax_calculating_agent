@@ -34,6 +34,8 @@
 ```powershell
 uv sync --locked --all-extras          # 按 uv.lock 创建 .venv 并安装锁定依赖
 uv run playwright install chromium     # 仅 e2e 测试需要
+# 无 uv 的应急等价路径（不锁定版本）：py -3.13 -m venv .venv
+# .venv\Scripts\pip install -e ".[dev]"
 ```
 
 ## 启动

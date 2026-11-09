@@ -253,7 +253,7 @@ POST /api/v1/calc/salaries-tax
 | govhk_salaries_allowances | https://www.gov.hk/en/residents/taxes/salaries/allowances/allowances/7years.htm | html_table（按年度） | auto＝各年度免税额数值 | counterpart＝IRO/Sch（待） |
 | ird_bus_pft | https://www.ird.gov.hk/eng/tax/bus_pft.htm | html | auto＝利得税税率/两级制数值（profile 待定）；资格=evidence | counterpart＝IRD 法例＋官方已刊指南 |
 
-- **C7.5a 独立证明与动态发现**：独立证明＝IRD 法例＋官方已刊指南（按来源捕获案件预期；**非两 URL 重复**）。已批准动态发现仅此一条：SDO index 精确 → 同 ird 主机路径 `/eng/pdf/sdo/gazette/`，文件名有界模式 `es[12][0-9]{10,14}.pdf`（与既有文档父 PDF 名核实）；其余链接一律隔离或列入精确已知 URL 清单，**无整域通配**。新 IRO 法律 URL 须显式固定 manifest/已知来源成对；未批准 → 状态不可用。**禁止以人工点击冒充 `T1-human` 标签**：primary_direct 是自动化定义（已批准 parser＋证明/哈希），非编排者逐次手更新。快照 pin 引用字段的分类不得被覆盖（C7.8）。
+- **C7.5a 独立证明与动态发现**：独立证明＝IRD 法例＋官方已刊指南（按来源捕获案件预期；**非两 URL 重复**）。**H2 起独立性按主机判定**：`source_id` 不同且 URL 主机不同（去 `www.`）才算独立；同一站点（如 `www.ird.gov.hk` 的两页）不得互相印证；任一侧缺 URL 即 fail closed。已批准动态发现仅此一条：SDO index 精确 → 同 ird 主机路径 `/eng/pdf/sdo/gazette/`，文件名有界模式 `es[12][0-9]{10,14}.pdf`（与既有文档父 PDF 名核实）；其余链接一律隔离或列入精确已知 URL 清单，**无整域通配**。新 IRO 法律 URL 须显式固定 manifest/已知来源成对；未批准 → 状态不可用。**禁止以人工点击冒充 `T1-human` 标签**：primary_direct 是自动化定义（已批准 parser＋证明/哈希），非编排者逐次手更新。快照 pin 引用字段的分类不得被覆盖（C7.8）。
 
 - **C7.6 AUTO 资格**仅限既有语义；不得假设每个税种都有机器可读合法性；法律不确定 → 隔离。
 - **C7.7 新年度扩展**：仅限同已批准税族/公式/资格/取整语义 ID ＋ 证据 ＋ 回归；动态年度解析器（初始 3 年）；否则变更请求。

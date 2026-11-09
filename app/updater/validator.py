@@ -22,16 +22,36 @@ T2 须先晋升 T1）。
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
+
+
+def _host(url: Any) -> str | None:
+    """URL 主机名（小写、去 `www.`）；缺失/不可解析 → None。"""
+    if not isinstance(url, str) or not url:
+        return None
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return None
+    if host.startswith("www."):
+        host = host[4:]
+    return host or None
 
 
 def _is_independent(fact: Mapping[str, Any], change: Mapping[str, Any]) -> bool:
-    """来源独立：source_id 与 URL 均不同于产生变更的来源（C7.5a 非 URL 重复）。"""
+    """来源独立：source_id 不同 **且** 主机不同（C7.5a 非 URL 重复）。
+
+    H2：仅比较 source_id/URL 会把同一站点（如 www.ird.gov.hk 的两个页面）
+    当作独立来源，站点级污染即可自我印证。独立性按主机判定；任一侧 URL
+    缺失时 fail closed（不构成独立证据）。
+    """
     if fact.get("source_id") == change.get("source_id"):
         return False
-    change_url = change.get("url")
-    if change_url is not None and fact.get("url") == change_url:
+    fact_host = _host(fact.get("url"))
+    change_host = _host(change.get("url"))
+    if fact_host is None or change_host is None:
         return False
-    return True
+    return fact_host != change_host
 
 
 def validate_change(

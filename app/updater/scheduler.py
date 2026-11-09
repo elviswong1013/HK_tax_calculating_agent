@@ -1083,6 +1083,15 @@ class Scheduler:
                     "fullpath": entry["fullpath"],
                     "value": entry["values"][0],
                     "source_id": entry["sources"][0],
+                    # H2：独立证据判定需要变更来源的 URL（同站两页不得互证）。
+                    "url": next(
+                        (
+                            source.get("url")
+                            for source in self._sources
+                            if source.get("source_id") == entry["sources"][0]
+                        ),
+                        None,
+                    ),
                     "anchor": entry["anchors"][0],
                 }
             )

@@ -22,7 +22,8 @@ REQ: 18（§9：独立证据校验——候选参数对照独立来源事实核�
     "anchor", "tier"}。
     判定规则：
     - 事实须与变更同 fullpath、数值一致，且来源独立（source_id 与 URL 均不同于
-      产生变更的来源），tier="T1"（T2 未晋升不算）→ 否则 evidence_missing；
+      产生变更的来源；H2 起按主机判定——同站不同页面不算独立，任一侧缺 URL
+      fail closed），tier="T1"（T2 未晋升不算）→ 否则 evidence_missing；
     - 独立 T1 事实存在但数值不一致 → conflict（来源冲突隔离）。
 
 Red 说明: app/updater/ 尚不存在 —— 每个测试失败原因＝
@@ -72,3 +73,23 @@ def test_independent_source_fact_validation() -> None:
     conflicting = dict(FACT_CAP_3500, value="4000")
     conflict = validate_change(CHANGE_CAP_3500, [conflicting])
     assert conflict["status"] == "conflict"
+
+    # —— (6) H2：同站不同页面（source_id 不同、主机相同）→ 不算独立
+    same_host = dict(
+        FACT_CAP_3500,
+        source_id="ird_avd",
+        url="https://www.ird.gov.hk/eng/faq/avd.htm",
+    )
+    same_host_result = validate_change(CHANGE_CAP_3500, [same_host])
+    assert same_host_result["status"] == "evidence_missing", (
+        "同一站点（ird.gov.hk）两个页面不得互证（H2 站点级污染）"
+    )
+
+    # —— (7) H2：变更侧缺 URL → 无法证明主机独立，fail closed
+    legacy_change = {
+        key: value for key, value in CHANGE_CAP_3500.items() if key != "url"
+    }
+    legacy = validate_change(legacy_change, [FACT_CAP_3500])
+    assert legacy["status"] == "evidence_missing", (
+        "变更来源缺 URL 时不得仅凭 source_id 判定独立"
+    )
