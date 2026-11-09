@@ -84,7 +84,45 @@ _HEADING_CLOSE_RES = tuple(
 )
 _TABLE_RE = re.compile(r"<table[^>]*>(.*?)</table\s*>", re.IGNORECASE | re.DOTALL)
 _ROW_RE = re.compile(r"<tr[^>]*>(.*?)</tr\s*>", re.IGNORECASE | re.DOTALL)
-_CELL_RE = re.compile(r"<t([dh])[^>]*>(.*?)</t\1\s*>", re.IGNORECASE | re.DOTALL)
+_CELL_RE = re.compile(r"<t([dh])([^>]*)>(.*?)</t\1\s*>", re.IGNORECASE | re.DOTALL)
+_COLSPAN_RE = re.compile(r"colspan\s*=\s*[\"']?(\d+)", re.IGNORECASE)
+# HKLII/e-Legislation 法例标记：<heading>/<crossheading> 等价于标题层级。
+_HEADING_ALIAS_RE = re.compile(
+    r"<(/?)(heading|crossheading)(\s[^>]*)?>", re.IGNORECASE
+)
+# decimal_string 规范值：去货币符与千位分隔（"$3,000" → "3000"）。
+_DECIMAL_NOISE_RE = re.compile(r"[,\s\u00a0]")
+
+
+def _normalize_heading_tags(document_text: str) -> str:
+    """把法例标记的 heading/crossheading 映射为 h2/h3（供有界 section 解析）。"""
+    def _replace(match: re.Match[str]) -> str:
+        closing, tag, attrs = match.group(1), match.group(2).lower(), match.group(3) or ""
+        level = "2" if tag == "heading" else "3"
+        return f"<{closing}h{level}{attrs}>"
+
+    return _HEADING_ALIAS_RE.sub(_replace, document_text)
+
+
+def _cells_in(row_text: str) -> list[str]:
+    """行内单元格文本；colspan 展开（HKLII 表头用 colspan 对齐数据列）。"""
+    cells: list[str] = []
+    for cell_match in _CELL_RE.finditer(row_text):
+        text = _visible_text(cell_match.group(3))
+        span = 1
+        span_match = _COLSPAN_RE.search(cell_match.group(2) or "")
+        if span_match:
+            span = max(1, min(int(span_match.group(1)), 50))
+        cells.extend([text] * span)
+    return cells
+
+
+def _normalize_value(value: str, slot_type: str) -> str:
+    # 仅 money_string 允许带货币符/千位分隔的法例表格写法（如 "$3,000"）；
+    # decimal_string 维持既有严格语义（观察器拒绝未批准货币前缀/逗号）。
+    if slot_type == "money_string":
+        return _DECIMAL_NOISE_RE.sub("", value.replace("HK$", "").replace("$", ""))
+    return value
 
 # F-07：有界解析——官方页面标题数远低于上限；超限截断防病态输入
 # （上万未闭合 <hN>）造成的 CPU 放大。
@@ -156,11 +194,7 @@ def _tables_in(section_text: str) -> list[list[list[str]]]:
     for table_match in _TABLE_RE.finditer(section_text):
         rows: list[list[str]] = []
         for row_match in _ROW_RE.finditer(table_match.group(1)):
-            cells = [
-                _visible_text(cell_match.group(2))
-                for cell_match in _CELL_RE.finditer(row_match.group(1))
-            ]
-            rows.append(cells)
+            rows.append(_cells_in(row_match.group(1)))
         tables.append(rows)
     return tables
 
@@ -211,7 +245,7 @@ def _extract_slot_value(
         for data_row in table[1:]:
             if not data_row:
                 continue
-            if row is not None and data_row[0] != row:
+            if row is not None and row not in data_row:
                 continue
             if col_index < len(data_row):
                 return data_row[col_index]
@@ -337,11 +371,14 @@ def extract(manifest: dict, document: bytes) -> dict[str, Any]:
     if not isinstance(document, (bytes, bytearray)):
         raise TypeError("document 必须为字节")
     document_text = bytes(document).decode("utf-8")
-    sections = _parse_sections(document_text)
+    sections = _parse_sections(_normalize_heading_tags(document_text))
 
     values: dict[str, str] = {}
     for slot in manifest.get("slots", []) or []:
-        values[slot["fullpath"]] = _extract_slot_value(sections, slot["anchor"])
+        extracted = _extract_slot_value(sections, slot["anchor"])
+        values[slot["fullpath"]] = _normalize_value(
+            extracted, str(slot.get("type") or "")
+        )
 
     notices: list[dict[str, str]] = []
     seen_anchors: set[str] = set()
