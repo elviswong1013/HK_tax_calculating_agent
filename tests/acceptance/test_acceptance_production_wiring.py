@@ -92,7 +92,10 @@ def test_acceptance_production_manifests_typed_slots_and_gate_binding(make_acc) 
     acc = make_acc("prodwiring")
     scheduler = acc.app.state.update_scheduler
     sources = scheduler_sources(scheduler)
-    assert len(sources) == 8, f"production allowlist must have 8 sources, actual {len(sources)}"
+    assert len(sources) == 9, (
+        "production allowlist must have 9 sources (8 HTML + 1 law PDF, H2-B), "
+        f"actual {len(sources)}"
+    )
     bundle = acc.store.get_bundle(acc.store.current()["bundle_id"])
     bundle_data = bundle.get("data") or {}
     problems: list[str] = []
@@ -341,7 +344,9 @@ def test_acceptance_production_change_detection_quarantine_publish(make_acc) -> 
     acc_quarantine = make_acc("prodquarantine")
     scheduler_quarantine = acc_quarantine.app.state.update_scheduler
     production_sources_q = scheduler_sources(scheduler_quarantine)
-    assert len(production_sources_q) == 8, "production allowlist must stay at 8 sources"
+    assert len(production_sources_q) == 9, (
+        "production allowlist must stay at 9 sources (H2-B law PDF)"
+    )
     sources_quarantine = production_sources_q + [_testonly_avd_source()]
     bundle_data_q = acc_quarantine.store.get_bundle(
         acc_quarantine.store.current()["bundle_id"]
@@ -381,7 +386,9 @@ def test_acceptance_production_change_detection_quarantine_publish(make_acc) -> 
     acc_publish = make_acc("prodpublish")
     scheduler_publish = acc_publish.app.state.update_scheduler
     production_sources = scheduler_sources(scheduler_publish)
-    assert len(production_sources) == 8, "production allowlist must stay at 8 sources"
+    assert len(production_sources) == 9, (
+        "production allowlist must stay at 9 sources (H2-B law PDF)"
+    )
     sources_publish = production_sources + [_testonly_avd_source()]
     bundle_data = acc_publish.store.get_bundle(
         acc_publish.store.current()["bundle_id"]

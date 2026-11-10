@@ -1152,6 +1152,8 @@ def render_source_document(
     overrides: dict | None = None,
     observer_slots: list | None = None,
 ) -> bytes:
+    if manifest.get("artifact_type") == "pdf_layout":
+        return _render_pdf_source_document(manifest, bundle_data, overrides)
     esc = _html_escape
     sections: dict[str, list[tuple[str, str, str]]] = {}
     order: list[str] = []
@@ -1193,6 +1195,58 @@ def render_source_document(
         parts.append(f"<h2>{esc(heading)}</h2><p>placeholder-no-notice</p>")
     parts.append("</body></html>")
     return "".join(parts).encode("utf-8")
+
+
+def _render_pdf_source_document(manifest: dict, bundle_data: dict, overrides: dict | None) -> bytes:
+    """按 pdf_layout manifest 生成最小 PDF（年度标题行＋(b) 行＋金额）。"""
+    lines: list[str] = []
+    for slot in manifest.get("slots") or []:
+        heading, row, _col = _anchor_parts(str(slot.get("anchor") or ""))
+        fullpath = str(slot.get("fullpath") or "")
+        value = (overrides or {}).get(fullpath)
+        if value is None:
+            resolved = resolve_bundle_path(bundle_data, fullpath)
+            value = resolved if resolved is not None else "0"
+        if heading not in lines:
+            lines.append(heading)
+        lines.append(f"(b)  {row}  ${value}")
+    return _minimal_pdf(lines)
+
+
+def _minimal_pdf(lines: list[str]) -> bytes:
+    def esc(text: str) -> str:
+        return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    stream = "BT /F1 12 Tf 72 760 Td " + "".join(
+        f"({esc(line)}) Tj 0 -14 Td " for line in lines
+    ) + "ET"
+    payload = stream.encode("ascii", "replace")
+    objects: list[bytes] = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
+        ),
+        b"<< /Length " + str(len(payload)).encode("ascii") + b" >>\nstream\n"
+        + payload + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for index, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += f"{index} 0 obj\n".encode("ascii") + body + b"\nendobj\n"
+    xref_offset = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n".encode("ascii")
+    out += b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode("ascii")
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n".encode("ascii")
+        + f"startxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(out)
 
 
 def production_round_documents(sources, bundle_data, overrides_by_source=None) -> dict:

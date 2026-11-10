@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import html as _html
 import re
-from typing import Any
+from typing import Any, Mapping
 
 # C7.2：manifest 记录封闭键集合（未知键拒绝、缺键不可用）
 MANIFEST_KEYS = frozenset(
@@ -123,6 +123,91 @@ def _normalize_value(value: str, slot_type: str) -> str:
     if slot_type == "money_string":
         return _DECIMAL_NOISE_RE.sub("", value.replace("HK$", "").replace("$", ""))
     return value
+
+
+# PDF（法例 Verified Copy）行内金额：货币记号开头（避免把法例行号 100(2)(b) 误当金额）。
+_PDF_AMOUNT_RE = re.compile(r"(?:HK)?\$-?\d[\d,]*(?:\.\d+)?")
+_PDF_SECTION_BREAK_RE = re.compile(
+    r"^(?:For the year of assessment|Schedule \d+|Last updated date)\b",
+    re.IGNORECASE,
+)
+_MAX_PDF_SCAN_LINES = 200
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def _pdf_lines(document: bytes) -> list[str]:
+    from app.updater.pdf_text import extract_pdf_text
+
+    return [" ".join(line.split()) for line in extract_pdf_text(document).splitlines()]
+
+
+def _extract_pdf_value(lines: list[str], anchor: str) -> str:
+    """PDF 行式锚定：heading 行之后、下一节之前，命中含 row 标签的行并取金额。"""
+    heading, row, _col = _split_anchor(anchor)
+    if row is None:
+        raise LookupError(f"PDF 值抽取须锚定 row（fail closed）：{anchor!r}")
+    start: int | None = None
+    for index, line in enumerate(lines):
+        if _squash(line) == _squash(heading):
+            start = index
+            break
+    if start is None:
+        raise LookupError(f"PDF 锚定标题未找到（fail closed）：{anchor!r}")
+    row_key = _squash(row)
+    window = lines[start + 1 : start + 1 + _MAX_PDF_SCAN_LINES]
+    for offset, line in enumerate(window):
+        if _PDF_SECTION_BREAK_RE.match(line):
+            break
+        if row_key not in _squash(line):
+            continue
+        amounts = _PDF_AMOUNT_RE.findall(line)
+        if amounts:
+            return amounts[-1]
+        # 版式抽取可能把行标与金额拆到相邻行：有界向下看 2 行。
+        for follow in window[offset + 1 : offset + 3]:
+            if _PDF_SECTION_BREAK_RE.match(follow):
+                break
+            match = _PDF_AMOUNT_RE.search(follow)
+            if match:
+                return match.group(0)
+        break
+    raise LookupError(f"PDF 锚定行/金额未命中（行标变化 → fail closed）：{anchor!r}")
+
+
+def _extract_pdf_layout(manifest: Mapping[str, Any], document: bytes) -> dict[str, Any]:
+    lines = _pdf_lines(document)
+    values: dict[str, str] = {}
+    for slot in manifest.get("slots", []) or []:
+        raw = _extract_pdf_value(lines, slot["anchor"])
+        values[slot["fullpath"]] = _normalize_value(raw, str(slot.get("type") or ""))
+
+    notices: list[dict[str, str]] = []
+    seen_anchors: set[str] = set()
+    for rule in manifest.get("legal_state_rules", []) or []:
+        anchor = rule.get("anchor") if isinstance(rule, dict) else None
+        if not isinstance(anchor, str) or anchor in seen_anchors:
+            continue
+        seen_anchors.add(anchor)
+        try:
+            heading, _row, _col = _split_anchor(anchor)
+        except LookupError:
+            continue
+        body: list[str] = []
+        capturing = False
+        for line in lines:
+            if _squash(line) == _squash(heading):
+                capturing = True
+                continue
+            if capturing:
+                if _PDF_SECTION_BREAK_RE.match(line):
+                    break
+                body.append(line)
+        if body:
+            notices.append({"anchor": anchor, "text": " ".join(body)})
+    return {"values": values, "notices": notices}
 
 # F-07：有界解析——官方页面标题数远低于上限；超限截断防病态输入
 # （上万未闭合 <hN>）造成的 CPU 放大。
@@ -370,6 +455,8 @@ def extract(manifest: dict, document: bytes) -> dict[str, Any]:
     """
     if not isinstance(document, (bytes, bytearray)):
         raise TypeError("document 必须为字节")
+    if manifest.get("artifact_type") == "pdf_layout":
+        return _extract_pdf_layout(manifest, bytes(document))
     document_text = bytes(document).decode("utf-8")
     sections = _parse_sections(_normalize_heading_tags(document_text))
 

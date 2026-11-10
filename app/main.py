@@ -76,6 +76,10 @@ _KNOWN_SOURCES: tuple[tuple[str, str, str], ...] = (
         "html_table",
     ),
     ("ird_bus_pft", "https://www.ird.gov.hk/eng/tax/bus_pft.htm", "html_section"),
+    # H2-B：法例独立来源（Cap.112 Schedule 43）。官方 e-Legislation 仅提供
+    # AJAX 壳页面，但 Verified Copy PDF 可按精确 URL 获取；跨主机＋跨发布者，
+    # 与 ird_bus_pft 的利得税宽减上限互为独立对应（PDF 解析依赖经用户批准）。
+    ("iro_sch43", "https://www.elegislation.gov.hk/hk/cap112!en/sch43.pdf", "pdf_layout"),
 )
 
 _PARSER_ID = "stdlib_bounded_html_v1"
@@ -406,6 +410,47 @@ _SOURCE_MANIFEST_SPECS: dict[str, dict[str, Any]] = {
         "legal_state_rules": [],
         "proof_authority": "ird.gov.hk 利得税官方页原文（heading＋行/列标锚定）",
         "independent_counterpart": "Cap.112 附表 43／2tr 官方 FAQ（互为独立对应）",
+    },
+    # H2-B：法例来源（e-Legislation Verified Copy PDF，Schedule 43）。
+    # 结构验证：2026-11-11 经渲染代理读取官方 PDF 文本（6 页，末页标注
+    # Verified Copy / Last updated 22.5.2026），2025/26 行 section 100(2)(b)
+    # → "$3,000"；PDF 行式锚定（heading 行 + 含 row 标签的金额行）。
+    "iro_sch43": {
+        "anchors": [
+            {
+                "path_regex": "heading:For the year of assessment 2025/26",
+                "anchor_status": "confirmed",
+            },
+            {
+                "path_regex": (
+                    "heading:For the year of assessment 2025/26"
+                    "#row:section 100(2)(b)"
+                ),
+                "anchor_status": "confirmed",
+            },
+        ],
+        "slots": [
+            {
+                "profile_ID": "profits_reduction_v1",
+                "fullpath": "profits.reductions.2025_26.cap",
+                "type": "money_string",
+                "unit": "HKD",
+                "constraints": {"min": "0", "max": "1000000", "step": "1"},
+                "anchor": (
+                    "heading:For the year of assessment 2025/26"
+                    "#row:section 100(2)(b)"
+                ),
+                "proof_role": "independent_counterpart",
+            },
+        ],
+        "fields": ["profits_reduction_cap_2025_26"],
+        "evidence_only_fields": [],
+        "legal_state_rules": [],
+        "proof_authority": (
+            "e-Legislation 官方 Verified Copy PDF（Cap.112 Schedule 43；"
+            "Last updated 22.5.2026）"
+        ),
+        "independent_counterpart": "ird_bus_pft 利得税官方页（互为独立对应）",
     },
 }
 

@@ -74,7 +74,9 @@ def test_002_six_old_paths_stop_auto_observer_only() -> None:
     import app.main as app_main
 
     sources = _known_source_entries()
-    assert len(sources) == 8, "生产 allowlist 须 8 源（C7.5）"
+    assert len(sources) == 9, (
+        "生产 allowlist 须 9 源（8 个 HTML 源＋1 个法例 PDF 源，H2-B）"
+    )
 
     slot_paths: set[str] = set()
     for entry in sources:
@@ -234,8 +236,27 @@ def test_002_eight_unchanged_paths_affected_cases_planned() -> None:
                 for slot in manifest.get("slots") or []
             )
         ]
+        if fullpath == "profits.reductions.2025_26.cap":
+            # H2-B：法例独立来源（e-Legislation Verified Copy PDF）作为第二
+            # 承载；两源数值不一致 → classifier 冲突隔离（不得自动发布）。
+            assert {str(m["source_id"]) for m in carriers} == {
+                "ird_bus_pft",
+                "iro_sch43",
+            }, "利得税宽减上限须由官方页＋法例 PDF 双承载（H2-B）"
+            law_slots = [
+                slot
+                for m in carriers
+                if m["source_id"] == "iro_sch43"
+                for slot in m.get("slots") or []
+                if slot.get("fullpath") == fullpath
+            ]
+            assert law_slots and law_slots[0]["proof_role"] == (
+                "independent_counterpart"
+            ), "法例承载须标记 independent_counterpart"
+            continue
         assert len(carriers) == 1, (
-            f"{fullpath!r} 须恰由一个生产来源承载（保留原配置）"
+            f"{fullpath!r} 须恰由一个生产来源承载（保留原配置；H2-B 例外："
+            "利得税宽减上限由法例 PDF 独立对应）"
         )
 
 

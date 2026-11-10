@@ -8,13 +8,15 @@ version = "0.2.0"
 description = "HK tax calculation agent (local, deterministic)"
 requires-python = ">=3.12,<3.14"
 # Production 运行时依赖（Green 阶段加入；Gate2＋用户授权 2026-10-08）。
-# 区间＝Annex C C1 运行时依赖行；解析依赖 beautifulsoup4/pypdf 维持不增加（C1/C7.3）。
+# 区间＝Annex C C1 运行时依赖行。pypdf 为例外：用户 2026-11-11 批准用于
+# H2-B 法例 Verified Copy PDF 的锚定抽取（beautifulsoup4 仍不引入）。
 dependencies = [
     "fastapi>=0.115,<1",
     "jinja2>=3.1,<4",
     "pydantic>=2.10,<3",
     "uvicorn>=0.30,<1",
     "httpx>=0.27,<1",
+    "pypdf>=6,<7",
 ]
 
 # Gate2 授权（2026-10-08）+ Annex C C1 顺序：test-only 先；production 依赖 Green 阶段再加
